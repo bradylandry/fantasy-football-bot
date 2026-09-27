@@ -61,11 +61,12 @@ class TestNoPersonalIds(unittest.TestCase):
     def test_no_email_addresses(self):
         for path in published_files():
             text = path.read_text(encoding="utf-8", errors="replace")
-            match = EMAIL.search(text)
-            self.assertIsNone(
-                match,
-                "{} contains an email address".format(path.relative_to(ROOT)),
-            )
+            for match in EMAIL.finditer(text):
+                # The Actions workflow commits as GitHub's own bot account.
+                if match.group(0).lower().endswith("@users.noreply.github.com"):
+                    continue
+                self.fail("{} contains an email address".format(
+                    path.relative_to(ROOT)))
 
 
 if __name__ == "__main__":

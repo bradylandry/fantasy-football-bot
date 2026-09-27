@@ -49,20 +49,68 @@ python3 draft_mode.py board --league LEAGUE_ID
 python3 draft_mode.py watch DRAFT_ID --user USERNAME
 python3 draft_mode.py watch DRAFT_ID --user USERNAME --replay
 python3 draft_mode.py grade DRAFT_ID --user USERNAME
+python3 draft_mode.py seed
 ```
+
+## Rankings feeds
+
+`board` and `seed` try feeds in this order. The first one that matches at
+least 150 players wins. A shorter list is a fragment and is discarded.
+The JSON field `feed` names the source that was used (`source` is still
+the on-disk file path). `attempts` lists each feed that was tried.
+
+1. Fantasy Football Calculator ADP, for the league's scoring format, team
+   count, and season. Their API docs allow this use and ask for attribution.
+2. FantasyCalc current redraft ranks (`overallRank`), same scoring format
+   (`ppr` / `half-ppr` / `standard` → `1` / `0.5` / `0`). Team count is
+   sent when it is 8, 10, 12, or 14; any other size uses the nearest of
+   those. A superflex roster sends `numQbs=2`. FantasyCalc has no season
+   parameter, so it is used only when the requested season is the current
+   UTC calendar year. Skill positions only (no kicker or defense) and no
+   bye week. Their API docs allow this endpoint, ask that results be
+   cached, and require a visible attribution.
+3. The previous `board.json`, then `seed_board.json`.
+
+When a live feed is used, the JSON includes `attribution`. Say that name
+when you show the cheat sheet.
 
 ## board
 
-Reads `scoring_settings.rec` and the league's team count, then pulls FFC
-`ppr`, `half-ppr`, or `standard` ADP for `league.season`.
+Reads `scoring_settings.rec` and the league's team count, then requests
+ADP for `league.season`.
 
 - `rec >= 0.75` → full PPR
 - `rec >= 0.25` → half PPR
 - otherwise → standard
 
-If the feed returns fewer than 150 matched players, or the request fails,
-the previous full board is kept. The fallback is `seed_board.json` beside
-the script. A refreshed sheet is written to `board.json` beside the script.
+If every live feed returns fewer than 150 matched players, or the requests
+fail, the previous full board is kept. The fallback file is
+`seed_board.json` beside the script. A refreshed sheet is written to
+`board.json` beside the script.
+
+## seed
+
+Rebuilds `seed_board.json` for a generic league. Defaults are 12 teams,
+full PPR, 1 quarterback, and the season from Sleeper `GET /state/nfl`
+(the UTC calendar year if that call fails).
+
+```bash
+python3 draft_mode.py seed
+python3 draft_mode.py seed --teams 12 --scoring ppr --year 2026
+```
+
+The file is replaced only when the new board matches at least 150 players
+and the player list actually changed. A fragment, an error, or an empty
+response leaves the existing file byte for byte. On a write, the first
+player object also carries `generated_at`, `source`, `source_url`,
+`season`, `teams`, `scoring`, and `num_qbs`. Those keys are ignored by
+the loader, including older copies of this script. A bare list with no
+provenance still loads.
+
+GitHub Actions runs this weekly on Mondays and pushes to `main` only in
+August, plus whenever someone starts the workflow by hand. Scheduled
+runs in other months exit without fetching. The workflow file has to be
+on `main` before the schedule will fire.
 
 ## watch
 

@@ -6,6 +6,7 @@ Sleeper draft, and grades the roster afterward. It never submits a pick.
     python draft_mode.py board --league LEAGUE_ID
     python draft_mode.py watch DRAFT_ID --user USERNAME
     python draft_mode.py grade DRAFT_ID --user USERNAME
+    python draft_mode.py seed
 
 Stdout is JSON. ``watch`` writes one JSON object per line.
 """
@@ -22,6 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from statistics import NormalDist
 
@@ -35,7 +37,27 @@ PLAYER_CACHE = HERE / ".cache" / "players.json"
 
 SLEEPER = "https://api.sleeper.app/v1"
 FFC = "https://fantasyfootballcalculator.com/api/v1/adp"
+FANTASYCALC = "https://api.fantasycalc.com/values/current"
 UA = {"User-Agent": "draft-mode/1.0"}
+
+# Feed ids reported on board/seed JSON and stored on a refreshed seed.
+FEED_FFC = "fantasyfootballcalculator"
+FEED_FANTASYCALC = "fantasycalc"
+ATTRIBUTION = {
+    FEED_FFC: "Fantasy Football Calculator (https://fantasyfootballcalculator.com)",
+    FEED_FANTASYCALC: "FantasyCalc (https://fantasycalc.com)",
+}
+# FantasyCalc accepts these league sizes. Anything else snaps to the nearest.
+FANTASYCALC_TEAMS = (8, 10, 12, 14)
+DEFAULT_SEED_TEAMS = 12
+DEFAULT_SEED_SCORING = "ppr"
+DEFAULT_SEED_QBS = 1
+# Extra keys on the first seed row. player_from_dict ignores them, so an
+# older copy of this script can still load the file.
+SEED_PROVENANCE = (
+    "generated_at", "source", "source_url", "season", "teams", "scoring",
+    "num_qbs",
+)
 
 # A full redraft board is ~250 names. Below this the feed is a fragment
 # (in-season FFC windows do this) and must not replace a real sheet.
@@ -269,9 +291,13 @@ def sleeper_index(players):
 
 def join_adp(adp, players):
     idx = sleeper_index(players)
+    known = set(str(k) for k in players.keys())
     matched, unmatched = [], []
     for row in adp:
-        pid = idx.get(ffc_key(row["name"], row["position"]))
+        sid = row.get("sleeper_id")
+        pid = str(sid) if sid and str(sid) in known else None
+        if pid is None:
+            pid = idx.get(ffc_key(row["name"], row["position"]))
         if pid:
             matched.append(dict(row, player_id=str(pid)))
         else:
@@ -683,7 +709,190 @@ def _slot_for(draft, user_id):
     return None if slot is None else int(slot)
 
 
+# --- rankings feeds --------------------------------------------------------
+
+def calendar_year():
+    return datetime.now(timezone.utc).year
+
+
+def current_season():
+    """Sleeper's NFL season, or the UTC calendar year if that call fails."""
+    try:
+        state = fetch_json(SLEEPER + "/state/nfl", timeout=30)
+        return int(state["season"])
+    except Exception:
+        return calendar_year()
+
+
+def num_qbs_for(roster_positions):
+    for slot in roster_positions or []:
+        if slot in ("SUPER_FLEX", "SUPERFLEX"):
+            return 2
+    return 1
+
+
+def ffc_url(fmt, teams, year):
+    return "{}/{}?teams={}&year={}".format(FFC, fmt, int(teams), int(year))
+
+
+def ppr_param(fmt):
+    value = {"ppr": 1, "half-ppr": 0.5, "standard": 0}[fmt]
+    if value == 0.5:
+        return "0.5"
+    return str(int(value))
+
+
+def nearest_fantasycalc_teams(teams):
+    teams = int(teams)
+    if teams in FANTASYCALC_TEAMS:
+        return teams
+    return min(FANTASYCALC_TEAMS, key=lambda n: (abs(n - teams), -n))
+
+
+def fantasycalc_url(fmt, teams, num_qbs):
+    qbs = 2 if int(num_qbs) >= 2 else 1
+    return ("{}?isDynasty=false&numQbs={}&numTeams={}&ppr={}"
+            .format(FANTASYCALC, qbs, nearest_fantasycalc_teams(teams),
+                    ppr_param(fmt)))
+
+
+def fetch_ffc_rows(fmt, teams, year):
+    body = fetch_json(ffc_url(fmt, teams, year), timeout=60)
+    if not isinstance(body, dict):
+        raise ValueError("fantasyfootballcalculator response was not an object")
+    rows = body.get("players") or []
+    if not isinstance(rows, list):
+        raise ValueError("fantasyfootballcalculator players was not a list")
+    return rows
+
+
+def fetch_fantasycalc_rows(fmt, teams, year, num_qbs=DEFAULT_SEED_QBS,
+                           now_year=None):
+    """Current redraft ranks. FantasyCalc has no season argument.
+
+    ``overallRank`` is the consensus order (their ADP field is empty on this
+    endpoint). Bye week is not in the payload. Skill positions only.
+    """
+    now_year = calendar_year() if now_year is None else int(now_year)
+    if int(year) != now_year:
+        raise LookupError(
+            "fantasycalc has no historical season; skipped year {}"
+            .format(year))
+    body = fetch_json(fantasycalc_url(fmt, teams, num_qbs), timeout=60)
+    if not isinstance(body, list):
+        raise ValueError("fantasycalc response was not a list")
+    rows = []
+    for item in body:
+        if not isinstance(item, dict):
+            continue
+        player = item.get("player") or {}
+        name = player.get("name") or ""
+        pos = player.get("position")
+        if not name or pos not in SKILL:
+            continue
+        try:
+            rank = float(item.get("overallRank"))
+        except (TypeError, ValueError):
+            continue
+        if rank <= 0:
+            continue
+        row = {
+            "name": name,
+            "position": pos,
+            "team": player.get("maybeTeam") or "",
+            "adp": rank,
+        }
+        sid = player.get("sleeperId")
+        if sid:
+            row["sleeper_id"] = str(sid)
+        rows.append(row)
+    return rows
+
+
+def _attempt(feed, url, fetched=0, matched=None, error=None):
+    out = {"feed": feed, "url": url, "fetched": fetched}
+    if matched is not None:
+        out["matched"] = matched
+    if error:
+        out["error"] = error
+    return out
+
+
+def pull_live_board(fmt, teams, year, minimum=MIN_BOARD,
+                    num_qbs=DEFAULT_SEED_QBS, now_year=None, players=None):
+    """Try Fantasy Football Calculator, then FantasyCalc.
+
+    Returns ``(board, unmatched, feed, source_url, attempts)``. ``board`` is
+    ``None`` when neither feed produced at least ``minimum`` matched players.
+    The Sleeper player list is downloaded only after a feed clears the raw
+    row floor.
+    """
+    sources = (
+        (FEED_FFC, ffc_url(fmt, teams, year),
+         lambda: fetch_ffc_rows(fmt, teams, year)),
+        (FEED_FANTASYCALC, fantasycalc_url(fmt, teams, num_qbs),
+         lambda: fetch_fantasycalc_rows(fmt, teams, year, num_qbs, now_year)),
+    )
+    attempts = []
+    for name, url, fetch_rows in sources:
+        try:
+            rows = fetch_rows()
+        except Exception as e:
+            attempts.append(_attempt(name, url, error=str(e)))
+            continue
+        raw = len(rows)
+        if raw < minimum:
+            attempts.append(_attempt(name, url, fetched=raw, error="fragment"))
+            continue
+        try:
+            if players is None:
+                players = fetch_players()
+            board, unmatched = assemble_board(rows, players)
+        except Exception as e:
+            attempts.append(_attempt(name, url, fetched=raw, error=str(e)))
+            continue
+        if len(board) < minimum:
+            attempts.append(_attempt(name, url, fetched=raw, matched=len(board),
+                                     error="fragment"))
+            continue
+        attempts.append(_attempt(name, url, fetched=raw, matched=len(board)))
+        return board, unmatched, name, url, attempts
+    return None, [], None, None, attempts
+
+
+def board_fingerprint(players):
+    return [
+        (p.player_id, p.name, p.position, p.team, float(p.adp), float(p.stdev),
+         int(p.bye), int(p.tier), p.injury_status)
+        for p in players
+    ]
+
+
+def save_seed(players, path, meta):
+    """Write a seed list. Provenance sits on the first row only."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = [asdict(p) for p in players]
+    if rows and meta:
+        first = dict(rows[0])
+        for key in SEED_PROVENANCE:
+            if key in meta and meta[key] is not None:
+                first[key] = meta[key]
+        rows[0] = first
+    text = json.dumps(rows, indent=2) + "\n"
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
 # --- commands --------------------------------------------------------------
+
+def _ffc_attempt(attempts):
+    for attempt in attempts:
+        if attempt.get("feed") == FEED_FFC:
+            return attempt
+    return {}
+
 
 def cmd_board(league_id, out_path, seed_path=SEED_BOARD, minimum=MIN_BOARD):
     previous, previous_source = load_previous_board(out_path, seed_path)
@@ -696,32 +905,32 @@ def cmd_board(league_id, out_path, seed_path=SEED_BOARD, minimum=MIN_BOARD):
     fmt = scoring_format(scoring["rec"])
     teams = _league_teams(league)
     year = int(league["season"])
-    url = "{}/{}?teams={}&year={}".format(FFC, fmt, teams, year)
-    fetched, unmatched_names, feed_error = None, [], None
+    num_qbs = num_qbs_for(league.get("roster_positions"))
+    board_live, unmatched_names, feed, _url, attempts = pull_live_board(
+        fmt, teams, year, minimum, num_qbs)
+    ffc_try = _ffc_attempt(attempts)
     try:
-        body = fetch_json(url, timeout=60)
-        rows = body.get("players") or []
-    except Exception as e:
-        rows, feed_error = [], str(e)
-    # A short list cannot become a full sheet, so skip the players download.
-    if len(rows) >= minimum:
-        try:
-            sleeper_players = fetch_players()
-            fetched, unmatched_names = assemble_board(rows, sleeper_players)
-        except Exception as e:
-            feed_error = str(e)
-            fetched = None
-    try:
-        board, status = resolve_board(fetched, previous, minimum)
+        board, status = resolve_board(board_live, previous, minimum)
     except BoardTooThin as e:
-        emit({"event": "error", "message": str(e), "feed_error": feed_error,
-              "fetched": len(rows)})
+        emit({"event": "error", "message": str(e),
+              "feed_error": ffc_try.get("error"),
+              "fetched": ffc_try.get("fetched", 0),
+              "attempts": attempts})
         return 1
     wrote = False
     if status == "refreshed" or not Path(out_path).exists():
         save_board(board, out_path)
         wrote = True
     source = str(out_path) if status == "refreshed" else previous_source
+    if status == "refreshed":
+        fetched_n = next(a["fetched"] for a in attempts if a.get("feed") == feed
+                         and not a.get("error"))
+        matched = len(board)
+        used_feed = feed
+    else:
+        fetched_n = ffc_try.get("fetched", 0)
+        matched = ffc_try.get("matched")
+        used_feed = None
     event = {
         "event": "board",
         "status": status,
@@ -730,22 +939,114 @@ def cmd_board(league_id, out_path, seed_path=SEED_BOARD, minimum=MIN_BOARD):
         "teams": teams,
         "scoring": fmt,
         "rec": scoring["rec"],
-        "fetched": len(rows),
-        "matched": None if fetched is None else len(fetched),
-        "unmatched": unmatched_names[:20],
+        "fetched": fetched_n,
+        "matched": matched,
+        "unmatched": (unmatched_names or [])[:20],
         "kept": len(board),
         "source": source,
         "wrote": str(out_path) if wrote else None,
         "seed": str(seed_path),
+        "feed": used_feed,
+        "attempts": attempts,
     }
-    if feed_error:
-        event["feed_error"] = feed_error
+    if used_feed:
+        event["attribution"] = ATTRIBUTION.get(used_feed)
+    ffc_error = ffc_try.get("error")
+    if ffc_error and ffc_error != "fragment" and status != "refreshed":
+        event["feed_error"] = ffc_error
     if status == "kept_previous":
         event["warning"] = (
             "Feed returned {} players (minimum {}). Kept the {}-player board "
             "at {}."
-            .format(len(rows), minimum, len(board), previous_source))
+            .format(fetched_n, minimum, len(board), previous_source))
     emit(event)
+    return 0
+
+
+def cmd_seed(out_path, teams=DEFAULT_SEED_TEAMS, scoring=DEFAULT_SEED_SCORING,
+             year=None, minimum=MIN_BOARD, num_qbs=DEFAULT_SEED_QBS):
+    """Rebuild the shipped seed. A short or failed feed leaves the file alone."""
+    if year is None:
+        year = current_season()
+    year = int(year)
+    teams = int(teams)
+    num_qbs = int(num_qbs)
+    path = Path(out_path)
+    existing = None
+    if path.exists():
+        try:
+            loaded = load_board(path)
+        except Exception:
+            loaded = None
+        if loaded and len(loaded) >= minimum:
+            existing = loaded
+    before = path.read_bytes() if path.exists() else None
+    board, _unmatched, feed, source_url, attempts = pull_live_board(
+        scoring, teams, year, minimum, num_qbs)
+    if board is None or len(board) < minimum:
+        emit({
+            "event": "seed",
+            "status": "kept",
+            "season": year,
+            "teams": teams,
+            "scoring": scoring,
+            "num_qbs": num_qbs,
+            "feed": None,
+            "kept": 0 if existing is None else len(existing),
+            "wrote": None,
+            "minimum": minimum,
+            "attempts": attempts,
+            "message": (
+                "Refusing to replace the seed. No feed matched at least {} "
+                "players."
+                .format(minimum)),
+        })
+        if before is not None and path.exists():
+            # pull_live_board must not have touched the seed. Check anyway.
+            if path.read_bytes() != before:
+                path.write_bytes(before)
+        return 1
+    if existing is not None and board_fingerprint(existing) == board_fingerprint(board):
+        emit({
+            "event": "seed",
+            "status": "unchanged",
+            "season": year,
+            "teams": teams,
+            "scoring": scoring,
+            "num_qbs": num_qbs,
+            "feed": feed,
+            "kept": len(existing),
+            "wrote": None,
+            "minimum": minimum,
+            "attempts": attempts,
+            "attribution": ATTRIBUTION.get(feed),
+        })
+        return 0
+    meta = {
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "source": feed,
+        "source_url": source_url,
+        "season": year,
+        "teams": teams,
+        "scoring": scoring,
+        "num_qbs": num_qbs,
+    }
+    save_seed(board, path, meta)
+    emit({
+        "event": "seed",
+        "status": "refreshed",
+        "season": year,
+        "teams": teams,
+        "scoring": scoring,
+        "num_qbs": num_qbs,
+        "feed": feed,
+        "kept": len(board),
+        "wrote": str(path),
+        "minimum": minimum,
+        "attempts": attempts,
+        "attribution": ATTRIBUTION.get(feed),
+        "generated_at": meta["generated_at"],
+    })
     return 0
 
 
@@ -970,9 +1271,31 @@ def main(argv=None):
     g.add_argument("--user", required=True, help="Sleeper username")
     g.add_argument("--board", default=None)
 
+    s = sub.add_parser(
+        "seed",
+        help="refresh seed_board.json from the rankings feeds")
+    s.add_argument("--out", default=str(SEED_BOARD))
+    s.add_argument("--teams", type=int, default=DEFAULT_SEED_TEAMS,
+                   help="default 12")
+    s.add_argument("--scoring", default=DEFAULT_SEED_SCORING,
+                   choices=("ppr", "half-ppr", "standard"),
+                   help="default ppr")
+    s.add_argument("--year", type=int, default=None,
+                   help="default is Sleeper's current NFL season")
+    s.add_argument("--num-qbs", type=int, default=DEFAULT_SEED_QBS,
+                   help="1, or 2 for superflex; default 1")
+    s.add_argument("--min-players", type=int, default=MIN_BOARD)
+
     args = parser.parse_args(argv)
     if args.cmd == "board":
         return cmd_board(args.league, args.out, args.seed, args.min_players)
+    if args.cmd == "seed":
+        if args.teams < 1 or args.num_qbs < 1:
+            emit({"event": "error",
+                  "message": "--teams and --num-qbs must be positive"})
+            return 1
+        return cmd_seed(args.out, args.teams, args.scoring, args.year,
+                        args.min_players, args.num_qbs)
     if args.cmd == "watch":
         if args.poll <= 0:
             emit({"event": "error", "message": "--poll must be positive"})
