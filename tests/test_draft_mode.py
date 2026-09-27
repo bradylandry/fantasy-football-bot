@@ -194,7 +194,8 @@ class TestFeedOrder(unittest.TestCase):
         self.assertEqual(event["feed_error"], "ffc down")
         self.assertIn("warning", event)
         feeds = [a["feed"] for a in event["attempts"]]
-        self.assertEqual(feeds, [dm.FEED_FFC, dm.FEED_FANTASYCALC])
+        # A full seed on disk beats FantasyCalc, so it is not called.
+        self.assertEqual(feeds, [dm.FEED_FFC])
 
     def test_old_season_does_not_call_fantasycalc(self):
         router = Router(ffc_rows=named_rows(2), calc_rows=named_rows(dm.MIN_BOARD))

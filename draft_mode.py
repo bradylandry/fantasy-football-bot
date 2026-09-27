@@ -155,15 +155,18 @@ def my_pick_numbers(slot, teams, rounds, reversal_round=0, draft_type="snake"):
 
 
 def phase_at(current, my_picks):
-    """``two_out`` when two picks remain before his turn, ``on_clock`` when
-    the current pick is his. Anything else is silence."""
+    """``two_out`` when one or two picks remain before his turn, ``on_clock``
+    when the current pick is his. Anything else is silence.
+
+    One pick out still counts as ``two_out``: two picks can land inside one
+    poll, and the heads-up must not be skipped when they do."""
     upcoming = [p for p in my_picks if p >= current]
     if not upcoming:
         return None
     gap = upcoming[0] - current
     if gap == 0:
         return "on_clock"
-    if gap == 2:
+    if gap in (1, 2):
         return "two_out"
     return None
 
@@ -422,18 +425,36 @@ def bye_multiplier(holes):
     return max(0.80, 1.0 - (holes / SEASON_WEEKS))
 
 
-def open_positions(roster_positions, roster):
-    """Positions that can fill a starting slot the roster does not cover yet."""
+def open_slots(roster_positions, roster):
+    """Positions that fill an empty starting slot, split into dedicated
+    slots (QB, RB, TE, K ...) and flex-only slots."""
     remaining = list(roster)
-    needed = set()
+    dedicated, flex = set(), set()
     for slot in _ordered_starters(roster_positions):
         elig = eligible_positions(slot)
         idx = next((i for i, p in enumerate(remaining) if p.position in elig), None)
         if idx is not None:
             remaining.pop(idx)
+        elif slot in FLEX_SLOTS:
+            flex.update(elig)
         else:
-            needed.update(elig)
-    return needed
+            dedicated.update(elig)
+    return dedicated, flex
+
+
+def open_dedicated_count(roster_positions, roster):
+    """How many dedicated (non-flex) starting slots are still empty."""
+    remaining = list(roster)
+    empty = 0
+    for slot in _ordered_starters(roster_positions):
+        if slot in FLEX_SLOTS:
+            continue
+        idx = next((i for i, p in enumerate(remaining) if p.position == slot), None)
+        if idx is None:
+            empty += 1
+        else:
+            remaining.pop(idx)
+    return empty
 
 
 def position_starter_counts(roster_positions):
@@ -445,42 +466,38 @@ def position_starter_counts(roster_positions):
     return counts
 
 
-def replacement_adp(board, position, starter_count, teams):
-    """ADP of the last league-wide starter at this position.
-
-    Demand is starters per team times team count. The player at that index
-    on the board is replacement level. Flex is not assigned to one position.
-    """
-    demand = max(1, int(starter_count) * max(1, int(teams)))
-    group = sorted((p for p in board if p.position == position),
-                   key=lambda p: p.adp)
-    if not group:
-        return None
-    return group[min(demand, len(group)) - 1].adp
-
-
-def expected_startable_left(available, position, repl_adp, next_pick):
-    """How many startable players (ADP at or before replacement) are likely
-    still available at ``next_pick`` — over the picks remaining until then."""
-    if repl_adp is None or next_pick is None:
-        return 0.0
-    total = 0.0
-    for p in available:
-        if p.position != position or p.adp > repl_adp + 1e-9:
-            continue
-        total += survival_prob(p, next_pick)
-    return total
+# Need is a nudge, not a doubling. Timing comes from ``urgency`` (value lost
+# by waiting). A flat 2x for any empty slot made the 2026-09-04 engine push
+# QBs and TEs 30 picks early that were 80-96% likely to still be there.
+NEED_DEDICATED = 1.15
+NEED_FLEX = 1.05
+# Kickers and defenses wait until this many of his picks are left.
+LATE_ONLY = {"K", "DEF"}
+LATE_ONLY_PICKS = 3
+# Bench depth beyond starters. A third QB or a second kicker is dead weight.
+EXTRA_ALLOWED = {"QB": 1, "TE": 1, "K": 0, "DEF": 0}
+# Hard avoid. These players cannot play now. ``Questionable`` and
+# ``Doubtful`` are shown but not filtered: at draft time Questionable covered
+# 46 of 264 players, including first-rounders.
+AVOID_STATUS = {"Out", "IR", "PUP", "NA", "Sus", "COV", "DNR"}
+# A player this many picks past ADP is falling for a reason the ADP does not
+# know. Flag it so a human (or the bot) checks the news before taking him.
+FALLING_PICKS = 20
 
 
-def need_multiplier(needed, expected_left):
-    """Scale need by how many startable players should still be there.
+def avoided(player):
+    return (player.injury_status or "") in AVOID_STATUS
 
-    Nothing left pushes the weight to 2. A deep pool that will survive
-    stays near 1, so an empty QB slot is not a reach by itself.
-    """
-    if not needed:
-        return 1.0
-    return 1.0 + 1.0 / (1.0 + max(0.0, float(expected_left)))
+
+def position_capped(position, my_players, roster_positions):
+    if position not in EXTRA_ALLOWED:
+        return False
+    starters = position_starter_counts(roster_positions).get(position, 0)
+    have = sum(1 for p in my_players if p.position == position)
+    if position == "QB" and any(s in ("SUPER_FLEX", "SUPERFLEX")
+                                for s in roster_positions):
+        starters += 1
+    return have >= starters + EXTRA_ALLOWED[position]
 
 
 def expected_value_later(available_at_pos, next_pick):
@@ -523,63 +540,78 @@ def tier_lift(player, available, cap):
     return min(float(cap), max(0.0, nxt.adp - player.adp))
 
 
-def _reason(player, next_pick, lift, needed, expected_left, holes):
+def _reason(player, current_pick, next_pick, lift, need, holes):
     bits = ["ADP {:.1f}".format(player.adp)]
+    if current_pick:
+        delta = current_pick - player.adp
+        if delta >= FALLING_PICKS:
+            bits.append("falling {:.0f} past ADP, check news".format(delta))
+        elif delta <= -10:
+            bits.append("reach of {:.0f}".format(-delta))
     if lift > 0:
         bits.append("last in tier {}".format(player.tier))
     if next_pick is not None:
         bits.append("{:.0f}% left at {}".format(
             survival_prob(player, next_pick) * 100, next_pick))
-    if needed:
-        bits.append("{:.1f} startable likely left".format(expected_left))
+    if need == "dedicated":
+        bits.append("fills {}".format(player.position))
+    elif need == "flex":
+        bits.append("fills flex")
     if holes > 0:
         bits.append("bye {} empties {}".format(player.bye, holes))
     return "; ".join(bits)
 
 
 def recommend(board, taken, my_players, roster_positions, current_pick,
-              next_pick, teams, top_n=3):
+              next_pick, teams, top_n=8, picks_left=None):
     """Top available players for the pick he is about to make.
 
     ``next_pick`` is the horizon: his upcoming pick when he is two out, or
     the pick after this one when he is on the clock. Survival uses that
-    horizon. ``current_pick`` is the pick on the board right now; callers
-    pass it so the call reads in order, and the score does not use it.
+    horizon. ``picks_left`` counts his picks from this one on; when it is
+    given, kickers and defenses wait for the last rounds and the final
+    picks are forced into empty starting slots.
     """
-    del current_pick
     taken = set(str(t) for t in taken)
-    available = [p for p in board if p.player_id not in taken]
-    needs = open_positions(roster_positions, my_players)
-    counts = position_starter_counts(roster_positions)
+    available = [p for p in board
+                 if p.player_id not in taken and not avoided(p)]
+    dedicated, flex = open_slots(roster_positions, my_players)
+    if picks_left is not None:
+        empty = open_dedicated_count(roster_positions, my_players)
+        if 0 < empty and picks_left <= empty:
+            only = [p for p in available if p.position in dedicated]
+            if only:
+                available = only
+        available = [
+            p for p in available
+            if p.position not in LATE_ONLY
+            or picks_left <= LATE_ONLY_PICKS
+            or not any(q.position not in LATE_ONLY for q in available)]
+    available = [p for p in available
+                 if not position_capped(p.position, my_players, roster_positions)]
     by_pos = {}
     for p in available:
         by_pos.setdefault(p.position, []).append(p)
-
-    repl = {}
-    expected_left = {}
-    later = {}
-    for pos, group in by_pos.items():
-        repl[pos] = replacement_adp(
-            board, pos, counts.get(pos, 0), teams)
-        expected_left[pos] = expected_startable_left(
-            available, pos, repl[pos], next_pick)
-        later[pos] = expected_value_later(group, next_pick)
+    later = dict((pos, expected_value_later(group, next_pick))
+                 for pos, group in by_pos.items())
 
     cap = max(1, int(teams))
     recs = []
     for p in available:
-        needed = p.position in needs
+        if p.position in dedicated:
+            need, need_m = "dedicated", NEED_DEDICATED
+        elif p.position in flex:
+            need, need_m = "flex", NEED_FLEX
+        else:
+            need, need_m = None, 1.0
         val = value_of(p.adp)
         urgency = val - later.get(p.position, 0.0)
         lift = tier_lift(p, available, cap)
         holes = marginal_bye_holes(p, my_players, roster_positions)
-        need_m = need_multiplier(needed, expected_left.get(p.position, 0.0))
-        bye_m = bye_multiplier(holes)
-        score = (val + urgency + lift) * need_m * bye_m
+        score = (val + urgency + lift) * need_m * bye_multiplier(holes)
         recs.append(Recommendation(
             player=p, score=score,
-            reason=_reason(p, next_pick, lift, needed,
-                           expected_left.get(p.position, 0.0), holes)))
+            reason=_reason(p, current_pick, next_pick, lift, need, holes)))
     recs.sort(key=lambda r: (-r.score, r.player.adp, r.player.name))
     return recs[:top_n]
 
@@ -819,8 +851,10 @@ def _attempt(feed, url, fetched=0, matched=None, error=None):
 
 
 def pull_live_board(fmt, teams, year, minimum=MIN_BOARD,
-                    num_qbs=DEFAULT_SEED_QBS, now_year=None, players=None):
-    """Try Fantasy Football Calculator, then FantasyCalc.
+                    num_qbs=DEFAULT_SEED_QBS, now_year=None, players=None,
+                    feeds=(FEED_FFC, FEED_FANTASYCALC)):
+    """Try the named feeds in order (default: Fantasy Football Calculator,
+    then FantasyCalc).
 
     Returns ``(board, unmatched, feed, source_url, attempts)``. ``board`` is
     ``None`` when neither feed produced at least ``minimum`` matched players.
@@ -835,6 +869,8 @@ def pull_live_board(fmt, teams, year, minimum=MIN_BOARD,
     )
     attempts = []
     for name, url, fetch_rows in sources:
+        if name not in feeds:
+            continue
         try:
             rows = fetch_rows()
         except Exception as e:
@@ -906,8 +942,14 @@ def cmd_board(league_id, out_path, seed_path=SEED_BOARD, minimum=MIN_BOARD):
     teams = _league_teams(league)
     year = int(league["season"])
     num_qbs = num_qbs_for(league.get("roster_positions"))
+    # FantasyCalc has no stdev, bye, kicker, or defense. Survival odds and
+    # the bye rule go blind on it, so any full board on disk beats it.
     board_live, unmatched_names, feed, _url, attempts = pull_live_board(
-        fmt, teams, year, minimum, num_qbs)
+        fmt, teams, year, minimum, num_qbs, feeds=(FEED_FFC,))
+    if board_live is None and previous is None:
+        board_live, unmatched_names, feed, _url, more = pull_live_board(
+            fmt, teams, year, minimum, num_qbs, feeds=(FEED_FANTASYCALC,))
+        attempts += more
     ffc_try = _ffc_attempt(attempts)
     try:
         board, status = resolve_board(board_live, previous, minimum)
@@ -981,8 +1023,10 @@ def cmd_seed(out_path, teams=DEFAULT_SEED_TEAMS, scoring=DEFAULT_SEED_SCORING,
         if loaded and len(loaded) >= minimum:
             existing = loaded
     before = path.read_bytes() if path.exists() else None
+    # The seed ships to every user. Only FFC carries stdev and bye weeks,
+    # so a FantasyCalc day must never replace it.
     board, _unmatched, feed, source_url, attempts = pull_live_board(
-        scoring, teams, year, minimum, num_qbs)
+        scoring, teams, year, minimum, num_qbs, feeds=(FEED_FFC,))
     if board is None or len(board) < minimum:
         emit({
             "event": "seed",
@@ -1103,13 +1147,14 @@ def _status_event(ctx, board_source, board_size, poll, replay):
     }
 
 
-def _recs_event(phase, current, your_pick, recs):
-    return {
+def _recs_event(phase, current, your_pick, recs, horizon=None, changed=None):
+    event = {
         "event": "recommendations",
         "phase": phase,
         "current_pick": current,
         "your_pick": your_pick,
         "picks_away": your_pick - current,
+        "horizon": horizon,
         "top": [{
             "player_id": r.player.player_id,
             "name": r.player.name,
@@ -1120,15 +1165,38 @@ def _recs_event(phase, current, your_pick, recs):
             "bye": r.player.bye,
             "injury_status": r.player.injury_status,
             "score": round(r.score, 1),
+            "survival": (None if horizon is None
+                         else round(survival_prob(r.player, horizon), 2)),
+            "value_vs_pick": round(your_pick - r.player.adp, 1),
+            "falling": (current - r.player.adp) >= FALLING_PICKS,
             "reason": r.reason,
         } for r in recs],
     }
+    if changed:
+        event["changed_from"] = changed
+    return event
 
 
-def advise(board, prior_picks, slot, roster_positions, my_picks, current, teams):
+def plan_change(previous_top, recs, taken):
+    """Narrate a reversal: the two-out pick is no longer the on-clock pick.
+
+    ``previous_top`` is the player id recommended first at two out. Returns
+    ``None`` when the plan held."""
+    if not previous_top or not recs:
+        return None
+    pid, name = previous_top
+    if recs[0].player.player_id == pid:
+        return None
+    return {"player_id": pid, "name": name,
+            "why": "taken" if pid in taken else "outscored"}
+
+
+def advise(board, prior_picks, slot, roster_positions, my_picks, current, teams,
+           top_n=8):
     phase = phase_at(current, my_picks)
     your_pick = next(p for p in my_picks if p >= current)
     horizon = horizon_pick(current, my_picks, phase)
+    picks_left = sum(1 for p in my_picks if p >= your_pick)
     taken = [str(p["player_id"]) for p in prior_picks if p.get("player_id")]
     mine = [p for p in prior_picks
             if p.get("draft_slot") == slot and p.get("player_id")]
@@ -1136,28 +1204,84 @@ def advise(board, prior_picks, slot, roster_positions, my_picks, current, teams)
     by_id = dict((p.player_id, p) for p in board)
     my_players = [by_id[str(p["player_id"])] for p in mine
                   if str(p["player_id"]) in by_id]
-    recs = recommend(board, taken, my_players, roster_positions, current,
-                     horizon, teams, top_n=3)
-    return phase, your_pick, recs
+    recs = recommend(board, taken, my_players, roster_positions, your_pick,
+                     horizon, teams, top_n=top_n, picks_left=picks_left)
+    return phase, your_pick, recs, horizon
 
 
-def iter_replay(board, picks, slot, roster_positions, my_picks, teams, rounds):
-    """Walk a finished (or partial) pick list the way the live watcher would
-    have spoken, without sleeping."""
-    total = teams * rounds
-    for current in range(1, total + 1):
+class Narrator:
+    """Speaks once per (pick, phase), and says so when the plan changes."""
+
+    def __init__(self, board, slot, roster_positions, my_picks, teams, top_n):
+        self.args = (board, slot, roster_positions, my_picks, teams)
+        self.top_n = top_n
+        self.announced = set()
+        self.plan = {}
+
+    def step(self, picks, current):
+        board, slot, roster_positions, my_picks, teams = self.args
         phase = phase_at(current, my_picks)
         if not phase:
-            continue
+            return None
+        your_pick = next(p for p in my_picks if p >= current)
+        if (your_pick, phase) in self.announced:
+            return None
+        self.announced.add((your_pick, phase))
         prior = [p for p in picks if (p.get("pick_no") or 0) < current]
-        _, your_pick, recs = advise(
-            board, prior, slot, roster_positions, my_picks, current, teams)
-        yield _recs_event(phase, current, your_pick, recs)
+        _, your_pick, recs, horizon = advise(
+            board, prior, slot, roster_positions, my_picks, current, teams,
+            self.top_n)
+        changed = None
+        if phase == "on_clock":
+            taken = set(str(p["player_id"]) for p in prior if p.get("player_id"))
+            changed = plan_change(self.plan.get(your_pick), recs, taken)
+        elif recs:
+            self.plan[your_pick] = (recs[0].player.player_id, recs[0].player.name)
+        return _recs_event(phase, current, your_pick, recs, horizon, changed)
 
 
-def cmd_watch(draft_id, username, poll, board_path=None, replay=False):
+def iter_replay(board, picks, slot, roster_positions, my_picks, teams, rounds,
+                top_n=8):
+    """Walk a finished (or partial) pick list the way the live watcher would
+    have spoken, without sleeping."""
+    narrator = Narrator(board, slot, roster_positions, my_picks, teams, top_n)
+    for current in range(1, teams * rounds + 1):
+        event = narrator.step(picks, current)
+        if event:
+            yield event
+
+
+def refresh_injuries(board, players):
+    """Board with ``injury_status`` taken from today's Sleeper player list.
+
+    The shipped seed carries the flags from the day it was built, which are
+    stale a week later and wrong a season later."""
+    out = []
+    for p in board:
+        meta = players.get(p.player_id)
+        if isinstance(meta, dict):
+            p = Player(**dict(asdict(p), injury_status=meta.get("injury_status")))
+        out.append(p)
+    return out
+
+
+def cmd_watch(draft_id, username, poll, board_path=None, replay=False, top_n=8,
+              wait_seconds=3600):
     try:
         ctx = _context(draft_id, username)
+        deadline = time.time() + wait_seconds
+        waiting = False
+        # The draft order is set shortly before the draft starts. Starting
+        # early is normal, so wait for it instead of failing.
+        while (ctx["slot"] is None and not replay
+               and ctx["draft"].get("status") == "pre_draft"
+               and time.time() < deadline):
+            if not waiting:
+                emit({"event": "waiting", "draft_status": "pre_draft",
+                      "message": "Draft order is not set yet. Waiting."})
+                waiting = True
+            time.sleep(poll)
+            ctx = _context(draft_id, username)
     except DraftTypeError as e:
         emit({"event": "refused", "draft_type": e.draft_type, "message": str(e)})
         return 2
@@ -1174,17 +1298,25 @@ def cmd_watch(draft_id, username, poll, board_path=None, replay=False):
     except BoardTooThin as e:
         emit({"event": "error", "message": str(e)})
         return 1
+    if not replay:
+        try:
+            board = refresh_injuries(board, fetch_players(max_age_hours=1))
+        except Exception as e:
+            emit({"event": "warning",
+                  "message": "injury refresh failed, using board flags: {}"
+                  .format(e)})
     emit(_status_event(ctx, source, len(board), poll, replay))
     s = ctx["settings"]
     if replay:
         picks = fetch_json("{}/draft/{}/picks".format(SLEEPER, draft_id), timeout=30)
         for event in iter_replay(board, picks, ctx["slot"], ctx["roster_positions"],
-                                 ctx["my_picks"], s["teams"], s["rounds"]):
+                                 ctx["my_picks"], s["teams"], s["rounds"], top_n):
             emit(event)
         emit({"event": "complete", "picks": len(picks), "replay": True})
         return 0
 
-    announced = set()
+    narrator = Narrator(board, ctx["slot"], ctx["roster_positions"],
+                        ctx["my_picks"], s["teams"], top_n)
     total = s["teams"] * s["rounds"]
     while True:
         try:
@@ -1198,15 +1330,9 @@ def cmd_watch(draft_id, username, poll, board_path=None, replay=False):
             emit({"event": "complete", "picks": len(picks),
                   "teams": s["teams"], "rounds": s["rounds"]})
             return 0
-        current = len(picks) + 1
-        phase = phase_at(current, ctx["my_picks"])
-        key = (current, phase)
-        if phase and key not in announced:
-            announced.add(key)
-            _, your_pick, recs = advise(
-                board, picks, ctx["slot"], ctx["roster_positions"],
-                ctx["my_picks"], current, s["teams"])
-            emit(_recs_event(phase, current, your_pick, recs))
+        event = narrator.step(picks, len(picks) + 1)
+        if event:
+            emit(event)
         time.sleep(poll)
 
 
@@ -1261,7 +1387,9 @@ def main(argv=None):
     w = sub.add_parser("watch", help="poll a draft and print top-3 JSON lines")
     w.add_argument("draft_id")
     w.add_argument("--user", required=True, help="Sleeper username")
-    w.add_argument("--poll", type=float, default=20.0)
+    w.add_argument("--poll", type=float, default=5.0)
+    w.add_argument("--top", type=int, default=8,
+                   help="how many players each recommendation lists")
     w.add_argument("--board", default=None)
     w.add_argument("--replay", action="store_true",
                    help="walk the pick list once instead of polling")
@@ -1300,8 +1428,11 @@ def main(argv=None):
         if args.poll <= 0:
             emit({"event": "error", "message": "--poll must be positive"})
             return 1
+        if args.top < 1:
+            emit({"event": "error", "message": "--top must be positive"})
+            return 1
         return cmd_watch(args.draft_id, args.user, args.poll, args.board,
-                         args.replay)
+                         args.replay, args.top)
     if args.cmd == "grade":
         return cmd_grade(args.draft_id, args.user, args.board)
     emit({"event": "error", "message": "unknown command"})
