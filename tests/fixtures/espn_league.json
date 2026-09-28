@@ -1,0 +1,140 @@
+{
+  "id": 100001,
+  "seasonId": 2026,
+  "scoringPeriodId": 3,
+  "draftDetail": {
+    "drafted": true,
+    "inProgress": false
+  },
+  "status": {
+    "currentMatchupPeriod": 3,
+    "latestScoringPeriod": 3,
+    "isActive": true
+  },
+  "settings": {
+    "name": "Example League",
+    "size": 10,
+    "isPublic": true,
+    "acquisitionSettings": {
+      "acquisitionBudget": 100,
+      "acquisitionType": "WAIVERS_TRADITIONAL",
+      "isUsingAcquisitionBudget": false
+    },
+    "draftSettings": {
+      "type": "SNAKE"
+    },
+    "rosterSettings": {
+      "lineupSlotCounts": {
+        "0": 1,
+        "2": 2,
+        "4": 2,
+        "6": 1,
+        "16": 1,
+        "17": 1,
+        "20": 6,
+        "21": 1,
+        "23": 1,
+        "1": 0
+      }
+    },
+    "scoringSettings": {
+      "scoringItems": [
+        {"statId": 4, "points": 4.0},
+        {"statId": 42, "points": 0.1}
+      ]
+    }
+  },
+  "teams": [
+    {
+      "id": 1,
+      "name": "Team 1",
+      "abbrev": "T1",
+      "owners": ["{00000000-0000-0000-0000-000000000001}"],
+      "primaryOwner": "{00000000-0000-0000-0000-000000000001}",
+      "roster": {
+        "entries": [
+          {
+            "lineupSlotId": 2,
+            "playerId": 4429795,
+            "injuryStatus": "NORMAL",
+            "playerPoolEntry": {
+              "player": {
+                "id": 4429795,
+                "fullName": "Jahmyr Gibbs",
+                "defaultPositionId": 2,
+                "proTeamId": 8,
+                "injuryStatus": "ACTIVE",
+                "stats": [
+                  {
+                    "scoringPeriodId": 3,
+                    "statSourceId": 0,
+                    "statSplitTypeId": 1,
+                    "appliedTotal": 34.4
+                  },
+                  {
+                    "scoringPeriodId": 3,
+                    "statSourceId": 1,
+                    "statSplitTypeId": 2,
+                    "appliedTotal": 99.0
+                  },
+                  {
+                    "scoringPeriodId": 3,
+                    "statSourceId": 1,
+                    "statSplitTypeId": 1,
+                    "appliedTotal": 21.45095599
+                  },
+                  {
+                    "scoringPeriodId": 4,
+                    "statSourceId": 1,
+                    "statSplitTypeId": 1,
+                    "appliedTotal": 22.09
+                  },
+                  {
+                    "scoringPeriodId": 0,
+                    "statSourceId": 1,
+                    "statSplitTypeId": 0,
+                    "appliedTotal": 256.93
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "lineupSlotId": 21,
+            "playerId": 1002,
+            "playerPoolEntry": {
+              "player": {
+                "id": 1002,
+                "fullName": "Reserve Player",
+                "defaultPositionId": 3,
+                "proTeamId": 0,
+                "injuryStatus": "INJURY_RESERVE",
+                "stats": []
+              }
+            }
+          },
+          {
+            "lineupSlotId": 20,
+            "playerId": 1003,
+            "playerPoolEntry": {
+              "player": {
+                "id": 1003,
+                "firstName": "Bench",
+                "lastName": "Player",
+                "defaultPositionId": 1,
+                "proTeamId": 7,
+                "injuryStatus": "QUESTIONABLE",
+                "stats": []
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "name": "Team 3",
+      "owners": ["{00000000-0000-0000-0000-000000000003}"]
+    }
+  ]
+}

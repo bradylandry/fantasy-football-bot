@@ -1,0 +1,9 @@
+{
+  "settings": {
+    "proTeams": [
+      {"id": 8, "abbrev": "DET", "byeWeek": 8, "location": "Detroit", "name": "Lions"},
+      {"id": 7, "abbrev": "DEN", "byeWeek": 12, "location": "Denver", "name": "Broncos"},
+      {"id": 0, "abbrev": "FA", "byeWeek": 0, "name": "FA"}
+    ]
+  }
+}

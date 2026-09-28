@@ -1,0 +1,44 @@
+{
+  "id": 100001,
+  "seasonId": 2026,
+  "scoringPeriodId": 3,
+  "status": {"latestScoringPeriod": 3},
+  "teams": [
+    {
+      "id": 1,
+      "name": "Team 1",
+      "owners": ["{00000000-0000-0000-0000-000000000001}"]
+    },
+    {
+      "id": 3,
+      "name": "Team 3",
+      "owners": ["{00000000-0000-0000-0000-000000000003}"]
+    }
+  ],
+  "schedule": [
+    {
+      "matchupPeriodId": 2,
+      "winner": "AWAY",
+      "home": {"teamId": 1, "totalPoints": 74.2},
+      "away": {"teamId": 3, "totalPoints": 88.1}
+    },
+    {
+      "matchupPeriodId": 3,
+      "winner": "UNDECIDED",
+      "home": {
+        "teamId": 1,
+        "totalPoints": 0.0,
+        "totalPointsLive": 12.5,
+        "totalProjectedPoints": 90.0,
+        "totalProjectedPointsLive": 80.25
+      },
+      "away": {
+        "teamId": 3,
+        "totalPoints": 0.0,
+        "totalPointsLive": 8.0,
+        "totalProjectedPoints": 88.0,
+        "totalProjectedPointsLive": 70.5
+      }
+    }
+  ]
+}
