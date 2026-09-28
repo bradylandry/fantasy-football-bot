@@ -180,6 +180,29 @@ class TestWatcher(unittest.TestCase):
         self.assertEqual(events[-1], "complete")
 
 
+class TestNow(unittest.TestCase):
+    def test_matches_the_watcher_on_the_clock(self):
+        prior = [p for p in DRAFT["picks"] if p["pick_no"] < 36]
+        event = dm.now_event(BOARD, prior, DRAFT["slot"],
+                             DRAFT["roster_positions"], MY_PICKS, DRAFT["teams"])
+        self.assertEqual(event["phase"], "on_clock")
+        self.assertEqual(event["your_pick"], 36)
+        self.assertEqual(event["top"][0]["name"], names(on_clock(36)[0])[0])
+        self.assertEqual(len(event["roster"]), 3)
+
+    def test_between_turns_measures_survival_to_his_pick(self):
+        prior = [p for p in DRAFT["picks"] if p["pick_no"] < 30]
+        event = dm.now_event(BOARD, prior, DRAFT["slot"],
+                             DRAFT["roster_positions"], MY_PICKS, DRAFT["teams"])
+        self.assertEqual(event["phase"], "upcoming")
+        self.assertEqual(event["horizon"], 36)
+
+    def test_no_picks_left(self):
+        event = dm.now_event(BOARD, DRAFT["picks"][:158], DRAFT["slot"],
+                             DRAFT["roster_positions"], MY_PICKS, DRAFT["teams"])
+        self.assertEqual(event["event"], "done")
+
+
 class TestSeedFeed(unittest.TestCase):
     def test_seed_never_comes_from_fantasycalc(self):
         from tests.test_draft_mode import Router, named_rows, sleeper_players

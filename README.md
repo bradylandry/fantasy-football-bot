@@ -48,6 +48,7 @@ the league.
 python3 draft_mode.py board --league LEAGUE_ID
 python3 draft_mode.py watch DRAFT_ID --user USERNAME
 python3 draft_mode.py watch DRAFT_ID --user USERNAME --replay
+python3 draft_mode.py now DRAFT_ID --user USERNAME
 python3 draft_mode.py grade DRAFT_ID --user USERNAME
 python3 draft_mode.py seed
 ```
@@ -159,6 +160,19 @@ emits `status` and `complete` and exits.
 
 Two picks out, survival is measured until the manager's pick. On the
 clock, it is measured until the pick after this one.
+
+## now
+
+One `recommendations` event for the manager's next pick, from a single
+read of the pick list, for hosts that cannot keep `watch` running. `phase`
+is `on_clock` or `upcoming`. It also lists the manager's `roster`. A draft
+whose order is not set yet prints `waiting` and exits 0.
+
+## Bot instructions
+
+[BOT_INSTRUCTIONS.md](BOT_INSTRUCTIONS.md) is the system prompt for the
+Grok Bot template: how to present picks, when to search the news, and the
+in-season lineup and waiver rules.
 
 ## grade
 

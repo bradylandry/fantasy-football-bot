@@ -5,6 +5,7 @@ Sleeper draft, and grades the roster afterward. It never submits a pick.
 
     python draft_mode.py board --league LEAGUE_ID
     python draft_mode.py watch DRAFT_ID --user USERNAME
+    python draft_mode.py now DRAFT_ID --user USERNAME
     python draft_mode.py grade DRAFT_ID --user USERNAME
     python draft_mode.py seed
 
@@ -1336,6 +1337,71 @@ def cmd_watch(draft_id, username, poll, board_path=None, replay=False, top_n=8,
         time.sleep(poll)
 
 
+def now_event(board, picks, slot, roster_positions, my_picks, teams, top_n=8):
+    """One recommendation for the manager's next pick, from one look at the
+    pick list. For hosts that cannot keep ``watch`` running."""
+    current = len(picks) + 1
+    upcoming = [p for p in my_picks if p >= current]
+    if not upcoming:
+        return {"event": "done", "current_pick": current,
+                "message": "No picks left for this manager."}
+    your_pick = upcoming[0]
+    if current == your_pick:
+        phase = "on_clock"
+        horizon = upcoming[1] if len(upcoming) > 1 else None
+    else:
+        phase = "upcoming"
+        horizon = your_pick
+    taken = [str(p["player_id"]) for p in picks if p.get("player_id")]
+    by_id = dict((p.player_id, p) for p in board)
+    mine = sorted((p for p in picks
+                   if p.get("draft_slot") == slot and p.get("player_id")),
+                  key=lambda p: p.get("pick_no") or 0)
+    my_players = [by_id[str(p["player_id"])] for p in mine
+                  if str(p["player_id"]) in by_id]
+    recs = recommend(board, taken, my_players, roster_positions, your_pick,
+                     horizon, teams, top_n=top_n, picks_left=len(upcoming))
+    event = _recs_event(phase, current, your_pick, recs, horizon)
+    event["roster"] = [{"name": p.name, "position": p.position, "bye": p.bye}
+                       for p in my_players]
+    return event
+
+
+def cmd_now(draft_id, username, board_path=None, top_n=8):
+    try:
+        ctx = _context(draft_id, username)
+    except DraftTypeError as e:
+        emit({"event": "refused", "draft_type": e.draft_type, "message": str(e)})
+        return 2
+    except LookupError as e:
+        emit({"event": "error", "message": str(e)})
+        return 1
+    if ctx["slot"] is None:
+        status = ctx["draft"].get("status")
+        emit({"event": "waiting" if status == "pre_draft" else "error",
+              "draft_status": status,
+              "message": "user {} is not in the draft order yet".format(username)})
+        return 0 if status == "pre_draft" else 1
+    try:
+        board, _source = load_effective_board(board_path)
+    except BoardTooThin as e:
+        emit({"event": "error", "message": str(e)})
+        return 1
+    try:
+        board = refresh_injuries(board, fetch_players(max_age_hours=1))
+    except Exception as e:
+        emit({"event": "warning",
+              "message": "injury refresh failed, using board flags: {}".format(e)})
+    s = ctx["settings"]
+    picks = fetch_json("{}/draft/{}/picks".format(SLEEPER, draft_id), timeout=15)
+    if len(picks) >= s["teams"] * s["rounds"]:
+        emit({"event": "complete", "picks": len(picks)})
+        return 0
+    emit(now_event(board, picks, ctx["slot"], ctx["roster_positions"],
+                   ctx["my_picks"], s["teams"], top_n))
+    return 0
+
+
 def cmd_grade(draft_id, username, board_path=None):
     try:
         ctx = _context(draft_id, username)
@@ -1394,6 +1460,12 @@ def main(argv=None):
     w.add_argument("--replay", action="store_true",
                    help="walk the pick list once instead of polling")
 
+    n = sub.add_parser("now", help="one recommendation for the next pick")
+    n.add_argument("draft_id")
+    n.add_argument("--user", required=True, help="Sleeper username")
+    n.add_argument("--board", default=None)
+    n.add_argument("--top", type=int, default=8)
+
     g = sub.add_parser("grade", help="post-draft value, starters, reach, steal")
     g.add_argument("draft_id")
     g.add_argument("--user", required=True, help="Sleeper username")
@@ -1433,6 +1505,11 @@ def main(argv=None):
             return 1
         return cmd_watch(args.draft_id, args.user, args.poll, args.board,
                          args.replay, args.top)
+    if args.cmd == "now":
+        if args.top < 1:
+            emit({"event": "error", "message": "--top must be positive"})
+            return 1
+        return cmd_now(args.draft_id, args.user, args.board, args.top)
     if args.cmd == "grade":
         return cmd_grade(args.draft_id, args.user, args.board)
     emit({"event": "error", "message": "unknown command"})
