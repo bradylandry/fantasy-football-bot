@@ -204,3 +204,8 @@ Auction bidding, keeper prices, and news. ADP does not know why a player
 is falling; `falling` says when to look. Waiver scans and Sunday lineup
 checks live in the bot, not in this repository. The script never submits
 a pick.
+
+## License
+
+MIT. See [LICENSE](LICENSE). Ranking data belongs to its feed; show the
+`attribution` string when you display a cheat sheet.
