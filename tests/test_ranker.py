@@ -149,6 +149,23 @@ class TestWatcher(unittest.TestCase):
         if stafford:
             self.assertIn("check news", stafford.reason)
 
+    def test_falling_flag_and_reason_use_the_same_pick(self):
+        # Two out, the room is at 23 and his pick is 25. Chase's ADP is 3.8,
+        # so 25 counts as a 20-pick fall and 23 does not. Both the flag and
+        # the reason follow 23.
+        chase = player("Ja'Marr Chase")
+        reason = dm._reason(chase, 25, 36, 0, None, 0, board_pick=23)
+        self.assertNotIn("check news", reason)
+        self.assertLess(23 - chase.adp, dm.FALLING_PICKS)
+        self.assertGreaterEqual(25 - chase.adp, dm.FALLING_PICKS)
+        n = dm.Narrator(BOARD, DRAFT["slot"], DRAFT["roster_positions"],
+                        MY_PICKS, DRAFT["teams"], 8)
+        event = n.step(DRAFT["picks"], 23)
+        self.assertEqual(event["phase"], "two_out")
+        self.assertEqual(event["current_pick"], 23)
+        for row in event["top"]:
+            self.assertEqual(row["falling"], "check news" in row["reason"])
+
     def test_waits_through_pre_draft_instead_of_failing(self):
         base = {"league_id": "1", "status": "pre_draft", "type": "snake",
                 "settings": {"teams": DRAFT["teams"], "rounds": DRAFT["rounds"]},
@@ -179,6 +196,42 @@ class TestWatcher(unittest.TestCase):
         self.assertIn("status", events)
         self.assertEqual(events[-1], "complete")
 
+    def test_multi_pick_jump_still_emits_the_heads_up(self):
+        # 20 picks are in. The next poll jumps to 29, passing his pick at 25.
+        ready = {"league_id": "1", "status": "drafting", "type": "snake",
+                 "draft_id": "d",
+                 "settings": {"teams": DRAFT["teams"], "rounds": DRAFT["rounds"]},
+                 "draft_order": {"u1": DRAFT["slot"]}}
+        batches = iter([
+            [p for p in DRAFT["picks"] if p["pick_no"] <= 20],
+            [p for p in DRAFT["picks"] if p["pick_no"] <= 29],
+            DRAFT["picks"],
+        ])
+
+        def fetch_json(url, timeout=30):
+            if url.endswith("/picks"):
+                return next(batches)
+            if "/draft/" in url:
+                return ready
+            if "/league/" in url:
+                return {"roster_positions": DRAFT["roster_positions"]}
+            raise AssertionError(url)
+
+        with patch.object(dm, "fetch_json", fetch_json), \
+                patch.object(dm, "fetch_user", lambda u: {"user_id": "u1", "username": u}), \
+                patch.object(dm, "fetch_players", lambda **k: {}), \
+                patch.object(dm, "load_effective_board", lambda p: (BOARD, "fixture")), \
+                patch.object(dm.time, "sleep", lambda s: None):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = dm.cmd_watch("d", "someone", 1.0)
+        rows = [json.loads(line) for line in buf.getvalue().splitlines()]
+        picks_25 = [(r["phase"], r["your_pick"]) for r in rows
+                    if r["event"] == "recommendations" and r["your_pick"] == 25]
+        self.assertEqual(code, 0)
+        self.assertEqual(picks_25, [("two_out", 25), ("on_clock", 25)])
+        self.assertEqual(rows[-1]["event"], "complete")
+
 
 class TestNow(unittest.TestCase):
     def test_matches_the_watcher_on_the_clock(self):
@@ -201,6 +254,27 @@ class TestNow(unittest.TestCase):
         event = dm.now_event(BOARD, DRAFT["picks"][:158], DRAFT["slot"],
                              DRAFT["roster_positions"], MY_PICKS, DRAFT["teams"])
         self.assertEqual(event["event"], "done")
+
+
+class TestQbWarning(unittest.TestCase):
+    def test_status_warns_for_superflex(self):
+        ctx = {
+            "draft": {"draft_id": "d"},
+            "league_id": "1",
+            "user": {"username": "someone", "user_id": "u1"},
+            "draft_type": "snake",
+            "settings": {"reversal_round": 0, "teams": 12, "rounds": 15,
+                         "pick_timer": 90},
+            "slot": 1,
+            "my_picks": [1],
+            "roster_positions": ["QB", "RB", "RB", "WR", "WR", "TE",
+                                 "SUPER_FLEX", "FLEX"],
+        }
+        event = dm.attach_qb_warning(
+            dm._status_event(ctx, "fixture", 10, 5, False),
+            ctx["roster_positions"])
+        self.assertIn("1QB", event["qb_warning"])
+        self.assertFalse(event["submits_picks"])
 
 
 class TestSeedFeed(unittest.TestCase):

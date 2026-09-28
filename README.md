@@ -2,7 +2,7 @@
 
 Recommend-only assistant for Sleeper fantasy football. It reads league data
 from the public Sleeper API (no login). It builds a draft cheat sheet, sends
-the top three picks while a draft is live, and grades the roster afterward.
+the top eight picks while a draft is live, and grades the roster afterward.
 During the season it runs a Tuesday waiver scan (including defense streaming
 and FAAB bid suggestions) and a Sunday lineup check.
 
@@ -77,8 +77,12 @@ the on-disk file path). `attempts` lists each feed that was tried.
 `seed` uses Fantasy Football Calculator only. The seed ships to every
 user, so a day when FFC is down never replaces it with FantasyCalc.
 
-When a live feed is used, the JSON includes `attribution`. Say that name
-when you show the cheat sheet.
+The JSON includes `attribution` when a live feed is used, and also when
+the kept file names its `source`. The shipped seed is Fantasy Football
+Calculator, dated 2026-09-04, so a short live feed still carries that
+attribution. Say that name when you show the cheat sheet. A superflex
+roster or a roster with two QB slots also sets `qb_warning`: the sheet
+is 1QB ADP, so quarterback values are understated.
 
 ## board
 
@@ -113,10 +117,12 @@ player object also carries `generated_at`, `source`, `source_url`,
 the loader, including older copies of this script. A bare list with no
 provenance still loads.
 
-GitHub Actions runs this weekly on Mondays and pushes to `main` only in
-August, plus whenever someone starts the workflow by hand. Scheduled
-runs in other months exit without fetching. The workflow file has to be
-on `main` before the schedule will fire.
+GitHub Actions runs this on Mondays and pushes to `main` only in August.
+A manual run does the same August check. Set the workflow's `force`
+input to refresh outside August on purpose. Scheduled runs in other
+months exit without fetching. Overlapping runs share one concurrency
+group, so a second run waits instead of pushing at the same time. The
+workflow file has to be on `main` before the schedule will fire.
 
 ## watch
 
@@ -141,12 +147,14 @@ Events:
 
 - `status` — slot, pick list, board in use, `"submits_picks": false`
 - `recommendations` — `phase` is `two_out` (one or two picks before the
-  manager's turn) or `on_clock`. Each is sent once per pick, even when
-  several picks land inside one poll. `top` lists eight players
+  manager's turn) or `on_clock`. Each is sent once per pick. A poll that
+  jumps three or more picks, autopick included, still emits the heads-up
+  and the on-clock event for any turn it passed. `top` lists eight players
   (`--top` to change it). Each has `survival` (chance he is still there
   at `horizon`, 0–1), `value_vs_pick` (your pick minus ADP; positive is a
-  steal), `falling` (the room has let him go 20+ picks past ADP: check
-  the news before taking him), `injury_status`, and a `reason` string.
+  steal), `falling` (the room has let him go 20+ picks past the current
+  pick: check the news before taking him; the reason string uses that
+  same pick), `injury_status`, and a `reason` string.
   On the clock, `changed_from` appears when the two-out favorite is no
   longer first, with `why`: `taken` or `outscored`.
 - `waiting` — the draft order is not set yet.
@@ -166,7 +174,10 @@ clock, it is measured until the pick after this one.
 One `recommendations` event for the manager's next pick, from a single
 read of the pick list, for hosts that cannot keep `watch` running. `phase`
 is `on_clock` or `upcoming`. It also lists the manager's `roster`. A draft
-whose order is not set yet prints `waiting` and exits 0.
+whose order is not set yet prints `waiting` and exits 0. `complete` means
+the draft is full, every pick is in, and there is nothing to recommend.
+`done` means this manager has no picks left while other teams are still
+picking. Neither `complete` nor `done` is a recommendation.
 
 ## Bot instructions
 
@@ -211,6 +222,11 @@ Filters, before scoring:
 
 Waiting is priced from ADP survival: a player still available at the
 next pick is not urgent.
+
+The ranker was tuned on one 10-team, 1QB, full-PPR redraft. TE premium
+is not modeled. Superflex and 2QB are not rescored: those leagues get
+`qb_warning` instead, because this sheet's quarterback ADPs are 1QB
+numbers.
 
 ## Not in this script
 
