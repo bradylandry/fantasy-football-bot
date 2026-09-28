@@ -1,0 +1,66 @@
+# Refresh seed_board.json from Fantasy Football Calculator.
+#
+# GitHub's cron ORs day-of-month and day-of-week, so "Mondays in August"
+# cannot be expressed in the schedule. The job runs every Monday and
+# returns immediately outside August. A manual run does the same unless
+# its force input is set. The schedule fires only after this file is on
+# the default branch.
+
+name: Refresh seed board
+
+on:
+  schedule:
+    - cron: "0 15 * * 1"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Refresh outside August and push to main"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: refresh-seed
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run in August, or when force is set
+        id: gate
+        run: |
+          month="$(date -u +%m)"
+          if [ "$month" = "08" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+              && [ "${{ github.event.inputs.force }}" = "true" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Force set: refreshing outside August."
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping refresh outside August. Re-run the workflow with force to override."
+          fi
+
+      - name: Checkout main
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Regenerate seed_board.json
+        if: steps.gate.outputs.run == 'true'
+        run: python3 draft_mode.py seed
+
+      - name: Commit the seed when it changed
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          git diff --quiet -- seed_board.json && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add seed_board.json
+          git commit -m "Refresh seed_board.json"
+          git push origin HEAD:main
