@@ -8,11 +8,7 @@
     "stdev": 0.6,
     "bye": 6,
     "injury_status": null,
-    "tier": 1,
-    "generated_at": "2026-09-04T00:00:00Z",
-    "source": "fantasyfootballcalculator",
-    "scoring": "ppr",
-    "season": 2026
+    "tier": 1
   },
   {
     "player_id": "9509",

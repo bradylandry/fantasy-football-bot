@@ -1,9 +1,10 @@
-# Refresh seed_board.json from the rankings feeds.
+# Refresh seed_board.json from Fantasy Football Calculator.
 #
 # GitHub's cron ORs day-of-month and day-of-week, so "Mondays in August"
 # cannot be expressed in the schedule. The job runs every Monday and
-# returns immediately outside August. workflow_dispatch runs in any month.
-# The schedule fires only after this file is on the default branch.
+# returns immediately outside August. A manual run does the same unless
+# its force input is set. The schedule fires only after this file is on
+# the default branch.
 
 name: Refresh seed board
 
@@ -11,6 +12,16 @@ on:
   schedule:
     - cron: "0 15 * * 1"
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Refresh outside August and push to main"
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: refresh-seed
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -19,16 +30,19 @@ jobs:
   refresh:
     runs-on: ubuntu-latest
     steps:
-      - name: Run in August, or when started by hand
+      - name: Run in August, or when force is set
         id: gate
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          month="$(date -u +%m)"
+          if [ "$month" = "08" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
-          elif [ "$(date -u +%m)" = "08" ]; then
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+              && [ "${{ github.event.inputs.force }}" = "true" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Force set: refreshing outside August."
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping scheduled refresh outside August."
+            echo "Skipping refresh outside August. Re-run the workflow with force to override."
           fi
 
       - name: Checkout main

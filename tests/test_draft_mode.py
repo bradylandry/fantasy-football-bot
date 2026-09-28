@@ -194,7 +194,48 @@ class TestFeedOrder(unittest.TestCase):
         self.assertEqual(event["feed_error"], "ffc down")
         self.assertIn("warning", event)
         feeds = [a["feed"] for a in event["attempts"]]
-        self.assertEqual(feeds, [dm.FEED_FFC, dm.FEED_FANTASYCALC])
+        # A full seed on disk beats FantasyCalc, so it is not called.
+        self.assertEqual(feeds, [dm.FEED_FFC])
+
+    def test_kept_seed_keeps_its_attribution(self):
+        seed_rows = named_rows(dm.MIN_BOARD, "Seed")
+        players = [
+            dm.Player(
+                player_id=str(i + 1), name=row["name"], position="WR",
+                team="BUF", adp=row["adp"], stdev=1.2, bye=7,
+                injury_status=None, tier=1,
+            )
+            for i, row in enumerate(seed_rows)
+        ]
+        router = Router(ffc_error="ffc down")
+        with TemporaryDirectory() as tmp:
+            out = Path(tmp) / "board.json"
+            seed = Path(tmp) / "seed.json"
+            dm.save_seed(players, seed, {
+                "generated_at": "2026-09-04T00:00:00Z",
+                "source": dm.FEED_FFC,
+                "scoring": "ppr",
+                "season": 2026,
+            })
+            code, event, urls = _run_board(router, self._league(), out, seed)
+        self.assertEqual(code, 0)
+        self.assertEqual(event["status"], "kept_previous")
+        self.assertIsNone(event["feed"])
+        self.assertEqual(event["attribution"], dm.ATTRIBUTION[dm.FEED_FFC])
+        self.assertFalse(any("fantasycalc" in url for url in urls))
+
+    def test_superflex_board_sets_qb_warning(self):
+        rows = named_rows(dm.MIN_BOARD)
+        router = Router(ffc_rows=rows, players=sleeper_players(rows))
+        with TemporaryDirectory() as tmp:
+            code, event, _urls = _run_board(
+                router, self._league(roster=["QB", "SUPER_FLEX", "RB"]),
+                Path(tmp) / "board.json", Path(tmp) / "seed.json")
+        self.assertEqual(code, 0)
+        self.assertIn("1QB", event["qb_warning"])
+        self.assertIsNone(dm.qb_ranking_warning(
+            ["QB", "RB", "RB", "WR", "WR", "TE", "FLEX"]))
+        self.assertIn("1QB", dm.qb_ranking_warning(["QB", "QB", "RB", "WR"]))
 
     def test_old_season_does_not_call_fantasycalc(self):
         router = Router(ffc_rows=named_rows(2), calc_rows=named_rows(dm.MIN_BOARD))
@@ -301,6 +342,29 @@ class TestSeedRefresh(unittest.TestCase):
         self.assertNotIn("source", raw[1])
         self.assertEqual(again, 0)
         self.assertEqual(json.loads(buf2.getvalue())["status"], "unchanged")
+
+    def test_shipped_seed_names_fantasyfootballcalculator(self):
+        rows = json.loads(dm.SEED_BOARD.read_text())
+        self.assertEqual(rows[0]["source"], dm.FEED_FFC)
+        self.assertTrue(str(rows[0]["generated_at"]).startswith("2026-09-04"))
+        self.assertEqual(rows[0]["scoring"], "ppr")
+        self.assertEqual(rows[0]["season"], 2026)
+        self.assertNotIn("source", rows[1])
+
+    def test_seed_rejects_a_two_qb_label(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "seed.json"
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = dm.cmd_seed(str(path), year=2026, num_qbs=2)
+            self.assertFalse(path.exists())
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(buf.getvalue())["event"], "error")
+        help_buf = io.StringIO()
+        with self.assertRaises(SystemExit), redirect_stdout(help_buf):
+            dm.main(["seed", "--help"])
+        self.assertNotIn("--num-qbs", help_buf.getvalue())
+        self.assertIn("Fantasy Football Calculator", help_buf.getvalue())
 
     def test_bad_feed_does_not_create_an_empty_file(self):
         router = Router(ffc_rows=[], calc_rows=[])
