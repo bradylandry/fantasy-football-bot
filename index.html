@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set up Muse for Sleeper</title>
+<style>
+  :root { color-scheme: light; --ink:#1c1917; --muted:#57534e; --line:#e7e5e4; --paper:#fafaf9; --card:#fff; --accent:#0f766e; }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 17px/1.5 Georgia, "Iowan Old Style", serif; color:var(--ink); background:var(--paper); }
+  main { max-width: 680px; margin: 0 auto; padding: 48px 20px 80px; }
+  h1 { font-size: 34px; line-height: 1.15; font-weight: 600; margin: 0 0 12px; }
+  h2 { font-size: 20px; margin: 36px 0 8px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+  ol { margin: 0; padding-left: 1.2em; }
+  li { margin: 0 0 8px; }
+  a { color: var(--accent); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.95em; }
+  .codebox { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 16px 12px; }
+  pre { margin: 0; white-space: pre-wrap; font: 14px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  button { margin-top: 12px; font: 15px/1 system-ui, sans-serif; background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 10px 14px; cursor: pointer; }
+  button.done { background: #44403c; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Set up Muse for your Sleeper league</h1>
+  <p class="muted">Install Muse, add Brady’s invite code, then paste one prompt. Muse will remember the schedule and check your league on Tuesday, Wednesday, and Sunday.</p>
+
+  <h2>1. Install Muse and add the code</h2>
+  <ol>
+    <li>Join at <a href="https://muse.ai/join">muse.ai/join</a>.</li>
+    <li>Open Settings and redeem this code within 48 hours of joining: <code>8J09TE</code></li>
+    <li>You and Brady each get 1 billion Muse tokens.</li>
+  </ol>
+
+  <h2>2. Copy this prompt into Muse</h2>
+  <p>Paste it as your first message. It tells Muse what to save and when to check. It does not use Brady’s league.</p>
+  <div class="codebox">
+    <pre id="prompt">Set me up for Sleeper fantasy football the same way Brady’s checks run. Do this now, and save it so it sticks.
+
+Save these as memory:
+- My fantasy platform is Sleeper, until I tell you otherwise.
+- Weekly checks are recommend-only. Never submit a waiver claim, lineup change, or trade. Never message anyone in the league.
+- A check only says whether a look is worth it, or that nothing changed. If you mention a player, it is a light note and open to disagreement. Do not present one add, drop, bid, or start/sit swap as the move to make.
+- A waiver look is worth it only when a starter is out, on bye, or a clear downgrade, and someone on waivers would actually play in the lineup. Do not flag a backup-for-backup swap. A healthy kicker or defense is usually not worth a claim. Name a possible add and drop only as a light note, and do not set the bid. Leave the bid to me.
+- A lineup look is worth it when a starter is out, on bye, or a clear downgrade and a bench player would start instead. If the outs are already on the bench and the starters are fine, say nothing changed.
+- Trades are not on the weekly schedule. Only bring one up when I ask, or when a starter is out for several weeks and a trade would fill that spot better than waivers. Propose one possible offer as a light note, open to disagreement. Do not send it until I approve those exact terms. After I approve, do not change the players or picks. Do not message anyone in the league.
+- The schedule, in my local time: Tuesday at 9:03am a waiver look, Wednesday at 5:00pm a lineup look, Sunday at 11:00am a lineup look, and Sunday at 12:15pm a lineup look. Stay quiet when nothing changed.
+
+Save a skill named sleeper-weekly-checks that you follow on those runs. The skill says: read my Sleeper league from memory, use the public read-only API, Tuesday is waivers only, Wednesday and Sunday are lineup only, use the waiver and lineup rules above, flag a look or say nothing changed, keep any names as a light note, and never submit a move. Trades stay off the schedule and follow the trade rule above.
+
+Then ask me, one question at a time: my timezone, my Sleeper username, and which league is mine if I have more than one. Save the league name, league id, and my roster id. After that, create the four scheduled checks if they are not already there.
+
+When you are done, tell me the four times in my timezone and that you will only message me when a look is worth it.</pre>
+    <button type="button" id="copy">Copy prompt</button>
+  </div>
+</main>
+<script>
+  const btn = document.getElementById("copy");
+  btn.addEventListener("click", async () => {
+    const text = document.getElementById("prompt").innerText;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      const range = document.createRange();
+      range.selectNodeContents(document.getElementById("prompt"));
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand("copy");
+    }
+    btn.textContent = "Copied";
+    btn.classList.add("done");
+  });
+</script>
+</body>
+</html>
