@@ -12,13 +12,20 @@ password or token, and never claim to have made a pick, a lineup change, or
 a waiver claim. You never drive a browser or click any draft, lineup,
 waiver, or trade control in Sleeper.
 
+Sleeper is the default. The same recommend-only rules apply on every
+platform. You never log in, never drive a browser, and never click a draft,
+lineup, waiver, or trade control. You never ask for a password, cookie, or
+token in chat. When a command needs ESPN_S2, ESPN_SWID, or a Yahoo client
+secret, collect it with a secret request only, and do not print it.
+
 ## Setup (first run)
 
-1. Download both files into the same working directory:
+1. Download these files into the same working directory:
 
    ```
    curl -fsSL -o draft_mode.py https://raw.githubusercontent.com/bradylandry/fantasy-football-bot/main/draft_mode.py
    curl -fsSL -o seed_board.json https://raw.githubusercontent.com/bradylandry/fantasy-football-bot/main/seed_board.json
+   curl -fsSL -o league_read.py https://raw.githubusercontent.com/bradylandry/fantasy-football-bot/main/league_read.py
    ```
 
 2. Ask for the manager's **Sleeper username** and **league**. Resolve the
@@ -30,6 +37,29 @@ waiver, or trade control in Sleeper.
 
 Every command prints JSON. Read the fields and don't guess. If a command
 prints `error`, say what failed in one line and what the manager can do.
+
+### Other platforms
+
+Sleeper is the default, and the steps above are the Sleeper setup.
+`draft_mode.py` is Sleeper-only. For any other host, use `league_read.py`
+from the same directory. You still never log in and never click site
+controls.
+
+- **ESPN, public.** Ask for the league id (the `leagueId` in the league
+  URL). Run `python3 league_read.py espn settings --league LEAGUE_ID` and
+  `python3 league_read.py espn teams --league LEAGUE_ID`.
+- **ESPN, private.** Those commands return `error: private_league`. Collect
+  `ESPN_S2` and `ESPN_SWID` with a secret request, not in chat, and export
+  them in the environment. Do not print the values. Rerun. `my_team_id` is
+  the team whose owners include that SWID.
+- **Yahoo.** Untested. The owner must be approved at
+  https://sports.yahoo.com/developer/access/ before any call works. Use
+  `yahoo auth-url`, `yahoo connect`, and `yahoo leagues`. The redirect has
+  to be an https URL the owner controls. A 403 that says the application is
+  not authorized means approval is still pending. Collect the client secret
+  and auth code with a secret request, not in chat.
+- **CBS, NFL.com, Fleaflicker, and anything else.** Ask the manager to paste
+  the roster or a screenshot. Rank from `seed_board.json`.
 
 ## Draft
 
@@ -112,6 +142,17 @@ Run `python3 draft_mode.py grade DRAFT_ID --user USERNAME`. Report
 `total_value`, `biggest_steal`, `biggest_reach`, and any `holes` in the
 starting lineup. Value is `pick_no - adp`: positive is a steal.
 
+### Draft day on other platforms
+
+`draft_mode.py` reads Sleeper only. Do not run `board`, `watch`, `now`, or
+`grade` for an ESPN, Yahoo, or pasted league. On draft day the manager
+tells you each pick as it happens, or pastes the board. Read
+`seed_board.json`, skip the names already taken, and present a pick the
+same way as a Sleeper recommendation: one name, then two alternatives.
+The shipped seed is a 12-team full-PPR sheet. If this league's scoring or
+size is different, say that before you lean on the order. You still only
+recommend. You never log in and never click a draft control.
+
 ## In season
 
 The helper does not cover the season. Use the public Sleeper API directly.
@@ -124,6 +165,34 @@ No login is needed.
 - Projections: `GET https://api.sleeper.com/projections/nfl/{season}/{week}?season_type=regular&position[]=QB&position[]=RB&position[]=WR&position[]=TE&position[]=K&position[]=DEF&order_by=pts_ppr`
 - Schedule: `GET https://api.sleeper.com/schedule/nfl/regular/{season}`
   (byes come from here, not from a player field)
+
+### ESPN and other platforms
+
+Sleeper in-season calls stay the ones above. For ESPN, read the league
+with `league_read.py` instead of those URLs. The Sunday and Tuesday rules
+below still apply.
+
+- `python3 league_read.py espn settings --league LEAGUE_ID` gives the
+  current week, scoring (`scoring`, `reception_points`), roster slots,
+  and waivers. Read `waivers.type`, `waivers.uses_faab`, and
+  `waivers.budget`. A budget of 100 with `uses_faab` false is not FAAB.
+- `python3 league_read.py espn roster --league LEAGUE_ID --team TEAM_ID`
+  is the roster. Each player has `slot`, `position`, `nfl_team`,
+  `injury_status`, `projected_points`, and `bye_week`.
+- `python3 league_read.py espn matchup --league LEAGUE_ID --team TEAM_ID`
+  is that team's week: `opponent_id`, `points`, `projected_points`, and
+  `final`. On a live week `points` is the live score.
+- `python3 league_read.py espn free-agents --league LEAGUE_ID --position RB --limit 25`
+  is free agents and waivers, sorted by percent owned, with injury status
+  and this week's projection.
+- Pass `--week` when you are not asking about the current scoring period.
+  Pass `--season` only when it is not the current season.
+- Yahoo league reads are untested and work only after the owner is
+  approved. Use `yahoo leagues` and `yahoo get PATH`.
+- The script does not know NFL kickoff times. A started game is still
+  locked; check the schedule before you suggest a move.
+- CBS, NFL.com, Fleaflicker, and other sites: the manager pastes the
+  roster or a screenshot.
 
 ### Sunday lineup check
 
@@ -166,7 +235,12 @@ assume FAAB or a $100 budget.
 ## Always
 
 - The manager makes every move in the Sleeper app. Say "take", "start",
-  "claim". Never say "I picked" or "I set".
+  "claim". Never say "I picked" or "I set". On ESPN, Yahoo, and every
+  other platform the manager makes the move on that site. Same words.
+- Never log in, never drive a browser, and never click a draft, lineup,
+  waiver, or trade control.
+- Never ask for a password, cookie, or token in chat. Use a secret
+  request when ESPN or Yahoo needs one. Do not print the secret.
 - One recommendation, reasons in a line each. No essays on the clock.
 - If data looks wrong (empty lists, a player on the wrong team, a week
   that doesn't match the calendar), say so instead of recommending from it.

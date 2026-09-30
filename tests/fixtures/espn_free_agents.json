@@ -1,0 +1,67 @@
+{
+  "players": [
+    {
+      "id": 4426338,
+      "status": "FREEAGENT",
+      "onTeamId": 0,
+      "player": {
+        "id": 4426338,
+        "fullName": "Bo Nix",
+        "defaultPositionId": 1,
+        "proTeamId": 7,
+        "injuryStatus": "ACTIVE",
+        "ownership": {"percentOwned": 78.75},
+        "stats": [
+          {
+            "scoringPeriodId": 4,
+            "statSourceId": 1,
+            "statSplitTypeId": 1,
+            "appliedTotal": 16.16
+          }
+        ]
+      }
+    },
+    {
+      "id": 4360078,
+      "status": "WAIVERS",
+      "onTeamId": 0,
+      "player": {
+        "id": 4360078,
+        "fullName": "Alec Pierce",
+        "defaultPositionId": 3,
+        "proTeamId": 11,
+        "injuryStatus": "INJURY_RESERVE",
+        "ownership": {"percentOwned": 68.0},
+        "stats": [
+          {
+            "scoringPeriodId": 4,
+            "statSourceId": 1,
+            "statSplitTypeId": 1,
+            "appliedTotal": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": 4362081,
+      "status": "FREEAGENT",
+      "onTeamId": 0,
+      "player": {
+        "id": 4362081,
+        "fullName": "Cameron Dicker",
+        "defaultPositionId": 5,
+        "proTeamId": 24,
+        "injuryStatus": "ACTIVE",
+        "ownership": {"percentOwned": 85.92},
+        "stats": [
+          {
+            "scoringPeriodId": 4,
+            "statSourceId": 1,
+            "statSplitTypeId": 1,
+            "appliedTotal": 7.72
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -9,6 +9,9 @@ and FAAB bid suggestions) and a Sunday lineup check.
 It never logs in to Sleeper and never makes a move. The manager makes every
 move in the Sleeper app. No Sleeper credentials are required.
 
+ESPN and Yahoo leagues are read by `league_read.py`. The draft helper stays
+Sleeper-only. See [Other platforms](#other-platforms).
+
 ## What this repo contains
 
 The draft helper the bot downloads on first run:
@@ -16,6 +19,7 @@ The draft helper the bot downloads on first run:
 - `draft_mode.py` — one standard-library Python script
 - `seed_board.json` — the cheat sheet it ships with (267 players, a public
   full-PPR ADP snapshot from 2026-09-04)
+- `league_read.py` — reads an ESPN league, and an untested Yahoo league
 
 League ids, draft ids, and usernames are arguments or API responses. Nothing
 here is tied to one league.
@@ -25,18 +29,21 @@ generated. The seed stays until a full feed replaces it.
 
 ## Download and run
 
-No clone. Save both files in the same directory. The script reads
+No clone. Save the files in the same directory. `draft_mode.py` reads
 `seed_board.json` next to itself.
 
 ```bash
 curl -fsSL -o draft_mode.py https://raw.githubusercontent.com/bradylandry/fantasy-football-bot/main/draft_mode.py
 curl -fsSL -o seed_board.json https://raw.githubusercontent.com/bradylandry/fantasy-football-bot/main/seed_board.json
+curl -fsSL -o league_read.py https://raw.githubusercontent.com/bradylandry/fantasy-football-bot/main/league_read.py
 ```
 
 ## Requirements
 
 Python 3. Standard library only. Network access to `api.sleeper.app`.
 Refreshing the cheat sheet also calls Fantasy Football Calculator.
+`league_read.py` is standard library only too. It calls ESPN, and it calls
+Yahoo only for the `yahoo` commands.
 
 ## Commands
 
@@ -234,6 +241,61 @@ Auction bidding, keeper prices, and news. ADP does not know why a player
 is falling; `falling` says when to look. Waiver scans and Sunday lineup
 checks live in the bot, not in this repository. The script never submits
 a pick.
+
+## Other platforms
+
+`league_read.py` prints one JSON object and never submits a lineup, a
+claim, or a trade. ESPN requests are GET only. Stdout errors are JSON
+with a non-zero exit.
+
+A public ESPN league needs the league id from the league URL:
+
+```bash
+python3 league_read.py espn settings --league LEAGUE_ID
+python3 league_read.py espn teams --league LEAGUE_ID
+python3 league_read.py espn roster --league LEAGUE_ID --team TEAM_ID
+python3 league_read.py espn free-agents --league LEAGUE_ID --limit 25
+python3 league_read.py espn matchup --league LEAGUE_ID --team TEAM_ID
+```
+
+The season defaults to Sleeper's NFL season (or ESPN's season object if
+that call fails). `--week` defaults to the league's current scoring
+period. `settings` reports the name, size, current week, scoring
+(`standard`, `half-ppr`, or `ppr` from receptions, statId 53), roster
+slot names, waiver type, whether FAAB is on, the waiver budget, and
+draft status. A budget of 100 with FAAB off is not a FAAB league.
+`roster` includes the lineup slot, position, NFL team, injury status,
+this week's projection, and bye week. `free-agents` is free agents and
+waivers, position filter and limit, sorted by percent owned.
+`matchup` is the opponent and the live, final, or projected points.
+
+A private ESPN league returns `{"error":"private_league",...}` until
+`ESPN_S2` and `ESPN_SWID` are set (the `espn_s2` and `SWID` cookies).
+The script sends them and does not print them. When they are set,
+`my_team_id` is the team whose owners include that SWID. Collect the
+cookies with a secret request, not in chat.
+
+Yahoo is untested. Yahoo gates Fantasy API access behind an application
+at <https://sports.yahoo.com/developer/access/>, and the owner has to be
+approved before a call works. `yahoo auth-url` builds the OAuth URL from
+`YAHOO_CLIENT_ID` and an https redirect (`--redirect-uri` or
+`YAHOO_REDIRECT_URI`). `oob` and localhost redirects are not accepted.
+`yahoo connect` exchanges `YAHOO_AUTH_CODE` and stores the refresh token
+in a mode-0600 file under the user config directory (`~/.config/fantasy-football-bot/yahoo_token.json`,
+or `$XDG_CONFIG_HOME`). It does not print the token. A later refresh
+keeps a rotated refresh token when Yahoo sends one. `yahoo leagues`
+lists the connected user's NFL leagues. `yahoo get PATH` is a JSON GET
+under `fantasysports.yahooapis.com/fantasy/v2`. A 403 that says the
+application is not authorized means approval is still pending. Docs:
+<https://sports.yahoo.com/developer/docs/> and
+<https://developer.yahoo.com/oauth2/guide/flows_authcode/>.
+
+`draft_mode.py` stays Sleeper-only. On ESPN, Yahoo, or a pasted league,
+draft day is the manager telling the bot each pick (or pasting the
+board) while the bot ranks from `seed_board.json`.
+
+CBS, NFL.com, Fleaflicker, and other hosts are not in this script. The
+owner pastes a roster or a screenshot.
 
 ## License
 
