@@ -19,6 +19,7 @@ The harness is unittest. It patches `league_read.http_json` and `draft_mode.fetc
 No process stays up. Readiness is both help commands exiting 0:
 
 ```bash
+set -euo pipefail
 python3 -m compileall -q draft_mode.py league_read.py
 python3 league_read.py --help >/dev/null
 python3 draft_mode.py --help >/dev/null
@@ -31,6 +32,7 @@ Teardown: these commands exit on their own. Nothing to kill.
 One read-only check. It parses the shipped cheat sheet and does not fetch:
 
 ```bash
+set -euo pipefail
 python3 -c 'import json; from pathlib import Path; rows=json.loads(Path("seed_board.json").read_text()); assert isinstance(rows, list) and len(rows) >= 150, len(rows); print(json.dumps({"ok": True, "seed_players": len(rows)}))'
 ```
 
@@ -41,6 +43,7 @@ python3 -c 'import json; from pathlib import Path; rows=json.loads(Path("seed_bo
 Drive ESPN from the recorded fixtures. That is the check to run. Do not execute `league_read.py espn ...` in a shell: that calls ESPN. The tests call `league_read.main` with the same arguments and serve `tests/fixtures/espn_league.json`, `espn_byes.json`, `espn_free_agents.json`, and `espn_scoreboard.json`.
 
 ```bash
+set -euo pipefail
 python3 -m unittest tests.test_league_read.TestEspnCommands tests.test_league_read.TestEspnShapes -v
 ```
 
@@ -53,19 +56,48 @@ Other features have their own files under `features/`. Drive one feature per pro
 Save under `/tmp/verify-fantasy-football-bot/`. That directory is outside the repo, so a token or cookie cannot land in git. There is no screen to shoot. Capture stdout.
 
 ```bash
-mkdir -p /tmp/verify-fantasy-football-bot
-python3 -c 'import json; from pathlib import Path; rows=json.loads(Path("seed_board.json").read_text()); assert isinstance(rows, list) and len(rows) >= 150, len(rows); print(json.dumps({"ok": True, "seed_players": len(rows)}))' > /tmp/verify-fantasy-football-bot/doctor.json
+set -euo pipefail
+out=/tmp/verify-fantasy-football-bot
+mkdir -p "$out"
+rm -f "$out/doctor.json" "$out/espn-fixtures.txt" "$out/espn-fixtures.status" "$out/side-effects.txt" "$out/run.status"
+
+python3 -c 'import json; from pathlib import Path; rows=json.loads(Path("seed_board.json").read_text()); assert isinstance(rows, list) and len(rows) >= 150, len(rows); print(json.dumps({"ok": True, "seed_players": len(rows)}))' > "$out/doctor.json"
+
+fingerprint() {
+  if [ -e "$1" ]; then
+    sha256sum -- "$1" | awk '{print $1}'
+  else
+    printf '%s\n' absent
+  fi
+}
+board_before=$(fingerprint board.json)
+seed_before=$(fingerprint seed_board.json)
 token="${XDG_CONFIG_HOME:-$HOME/.config}/fantasy-football-bot/yahoo_token.json"
-token_before=$(stat -c %Y "$token" 2>/dev/null || echo absent)
-python3 -m unittest tests.test_league_read.TestEspnCommands tests.test_league_read.TestEspnShapes -v > /tmp/verify-fantasy-football-bot/espn-fixtures.txt 2>&1
-token_after=$(stat -c %Y "$token" 2>/dev/null || echo absent)
-test ! -e board.json
-git diff --quiet -- seed_board.json
-test "$token_before" = "$token_after"
-printf '%s\n' 'board.json absent' 'seed_board.json unchanged' "yahoo token $token_after" > /tmp/verify-fantasy-football-bot/side-effects.txt
+token_before=$(fingerprint "$token")
+
+set +e
+python3 -m unittest tests.test_league_read.TestEspnCommands tests.test_league_read.TestEspnShapes -v > "$out/espn-fixtures.txt" 2>&1
+espn_status=$?
+set -e
+printf '%s\n' "$espn_status" > "$out/espn-fixtures.status"
+if [ "$espn_status" -ne 0 ]; then
+  exit "$espn_status"
+fi
+
+board_after=$(fingerprint board.json)
+seed_after=$(fingerprint seed_board.json)
+token_after=$(fingerprint "$token")
+if [ "$board_before" != "$board_after" ] || [ "$seed_before" != "$seed_after" ] || [ "$token_before" != "$token_after" ]; then
+  printf '%s\n' "board.json $board_before -> $board_after" "seed_board.json $seed_before -> $seed_after" "yahoo token $token_before -> $token_after" > "$out/side-effects.txt"
+  exit 1
+fi
+printf '%s\n' 'board.json unchanged' 'seed_board.json unchanged' 'yahoo token unchanged' > "$out/side-effects.txt"
+printf '%s\n' 0 > "$out/run.status"
 ```
 
-The ESPN unittest is the user path (`settings`, `teams`, `roster`, `free-agents`, `matchup`) with the mock on `http_json` only. `board.json` is gitignored, so `git status` does not show it. The checks above are the side effects: no `board.json`, `seed_board.json` unchanged, Yahoo token mtime unchanged. The Yahoo connect test, when run from the full suite, writes its token inside a temporary directory and deletes it.
+`set -euo pipefail` is on, and the unittest status is saved and re-exited. A failing test or a side-effect mismatch stops the script before `run.status` is 0, and the success lines are not written. Stale evidence is removed first, so an old success file cannot outlive a failed run.
+
+The ESPN unittest is the user path (`settings`, `teams`, `roster`, `free-agents`, `matchup`) with the mock on `http_json` only. Side effects are a before/after checksum of `board.json`, `seed_board.json`, and the Yahoo token. An existing gitignored `board.json` stays valid when the drive does not change it. The Yahoo connect test, when run from the full suite, writes its token inside a temporary directory and deletes it.
 
 `--replay` on `watch` is the only dry-run flag. It skips the pre-draft wait, the injury refresh, and the poll loop. It still fetches the draft, the user, the league, and the pick list once. It does not submit a pick (`submits_picks` is false). Do not run it here. `league_read.py` has no dry-run flag. ESPN requests are GET only. `board` and `seed` have no dry-run; both fetch ranking feeds, and `seed` can replace `seed_board.json`. Do not run them here.
 
@@ -74,9 +106,15 @@ The ESPN unittest is the user path (`settings`, `teams`, `roster`, `free-agents`
 Kill only a process this skill started. Launch and the fixture drive start none.
 
 ```bash
-test -s /tmp/verify-fantasy-football-bot/doctor.json
-test -s /tmp/verify-fantasy-football-bot/espn-fixtures.txt
-test -s /tmp/verify-fantasy-football-bot/side-effects.txt
+set -euo pipefail
+out=/tmp/verify-fantasy-football-bot
+test "$(cat "$out/espn-fixtures.status")" = 0
+test "$(cat "$out/run.status")" = 0
+grep -qx 'board.json unchanged' "$out/side-effects.txt"
+grep -qx 'seed_board.json unchanged' "$out/side-effects.txt"
+grep -qx 'yahoo token unchanged' "$out/side-effects.txt"
+test -s "$out/doctor.json"
+test -s "$out/espn-fixtures.txt"
 ```
 
 Leave `/tmp/verify-fantasy-football-bot/` in place. Do not delete `seed_board.json`.
@@ -86,6 +124,7 @@ Leave `/tmp/verify-fantasy-football-bot/` in place. Do not delete `seed_board.js
 Run `league_read.py` against the recorded ESPN fixtures (the Drive command above). Yahoo is untested. Do not run `yahoo connect`, `yahoo leagues`, or `yahoo get`. A green `tests.test_league_read.TestYahoo` only shows the mocked client; it does not test Yahoo. Confirm the help text still says so:
 
 ```bash
+set -euo pipefail
 python3 league_read.py yahoo --help | grep -q -i untested
 ```
 
@@ -94,6 +133,7 @@ python3 league_read.py yahoo --help | grep -q -i untested
 Local suite (this is not a CI step):
 
 ```bash
+set -euo pipefail
 python3 -m unittest
 ```
 

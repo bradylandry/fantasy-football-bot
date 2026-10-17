@@ -13,6 +13,7 @@ After the draft the manager asks how the roster graded. The agent runs `draft_mo
 unittest never calls `grade`. The safe check is help, which exits before any fetch:
 
 ```bash
+set -euo pipefail
 python3 draft_mode.py grade --help >/dev/null
 ```
 

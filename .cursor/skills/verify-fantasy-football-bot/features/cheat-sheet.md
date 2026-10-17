@@ -12,6 +12,7 @@ On draft day the manager asks for the sheet. The agent runs `draft_mode.py board
 ## Driving it with unittest
 
 ```bash
+set -euo pipefail
 python3 -m unittest tests.test_draft_mode -v
 ```
 

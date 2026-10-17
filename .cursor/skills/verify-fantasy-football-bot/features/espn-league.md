@@ -15,6 +15,7 @@ The manager pastes an ESPN league id from the league URL. The agent runs `league
 ## Driving it with unittest
 
 ```bash
+set -euo pipefail
 python3 -m unittest tests.test_league_read.TestEspnCommands tests.test_league_read.TestEspnShapes -v
 ```
 

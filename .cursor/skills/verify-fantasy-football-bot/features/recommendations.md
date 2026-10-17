@@ -13,6 +13,7 @@ The manager names a Sleeper username and a draft id. If the agent can keep a pro
 ## Driving it with unittest
 
 ```bash
+set -euo pipefail
 python3 -m unittest tests.test_ranker.TestWatcher tests.test_ranker.TestNow tests.test_ranker.TestQbWarning -v
 ```
 

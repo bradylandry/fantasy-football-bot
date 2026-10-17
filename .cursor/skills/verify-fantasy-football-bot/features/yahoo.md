@@ -16,6 +16,7 @@ Yahoo is untested. The manager cannot use it until the owner is approved for Fan
 Do not call Yahoo. Mark the feature untested. The help text is the check that the mark is still there:
 
 ```bash
+set -euo pipefail
 python3 league_read.py yahoo --help | grep -q -i untested
 ```
 
