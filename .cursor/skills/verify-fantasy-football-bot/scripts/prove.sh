@@ -17,6 +17,7 @@ rm -f \
   "$out/side-effects.txt" \
   "$out/git-status.txt" \
   "$out/run.status"
+trap 'rc=$?; [ "$rc" -eq 0 ] || printf "%s\n" 1 >"$out/run.status"' EXIT
 
 {
   python3 -m compileall -q draft_mode.py league_read.py

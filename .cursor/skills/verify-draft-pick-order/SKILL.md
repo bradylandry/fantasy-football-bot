@@ -44,7 +44,7 @@ Exit 0 prints `ok`, the sync commit, and the counts. Exit 1 prints `FAIL` and on
 | `draft_mode.phase_at` | `on_clock`, `two_out`, or silence from that list |
 | `draft_mode.Narrator.step` | Each `(your_pick, phase)` is spoken once along a full walk |
 | `draft_mode.live_steps` | A jump from pick 1 to the end announces the same turns as the walk |
-| `draft_mode.unsupported_reason` | `auction`, `dynasty`, and `""` raise `DraftTypeError`. `snake` and `linear` do not |
+| `draft_mode.unsupported_reason` | Returns `None` for `snake` and `linear`, and a reason for `auction`. Separately, `my_pick_numbers` raises `DraftTypeError` for `auction`, `dynasty`, and `""` |
 
 `Narrator.step` calls `recommend` on a two-player board so the walk can run. The check does not judge scores, names, or injury filters. A wrong recommendation still passes.
 
