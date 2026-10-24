@@ -53,71 +53,62 @@ Other features have their own files under `features/`. Drive one feature per pro
 
 ## Evidence
 
-Save under `/tmp/verify-fantasy-football-bot/`. That directory is outside the repo, so a token or cookie cannot land in git. There is no screen to shoot. Capture stdout.
+Save under `/tmp/verify-fantasy-football-bot/`. That directory is outside the repo, so a token or cookie cannot land in git. There is no screen to shoot. Capture stdout, exit codes, and the network lock.
+
+From the repo root, one command writes the proof:
 
 ```bash
-set -euo pipefail
-out=/tmp/verify-fantasy-football-bot
-mkdir -p "$out"
-rm -f "$out/doctor.json" "$out/espn-fixtures.txt" "$out/espn-fixtures.status" "$out/side-effects.txt" "$out/run.status"
-
-python3 -c 'import json; from pathlib import Path; rows=json.loads(Path("seed_board.json").read_text()); assert isinstance(rows, list) and len(rows) >= 150, len(rows); print(json.dumps({"ok": True, "seed_players": len(rows)}))' > "$out/doctor.json"
-
-fingerprint() {
-  if [ -e "$1" ]; then
-    sha256sum -- "$1" | awk '{print $1}'
-  else
-    printf '%s\n' absent
-  fi
-}
-board_before=$(fingerprint board.json)
-seed_before=$(fingerprint seed_board.json)
-token="${XDG_CONFIG_HOME:-$HOME/.config}/fantasy-football-bot/yahoo_token.json"
-token_before=$(fingerprint "$token")
-
-set +e
-python3 -m unittest tests.test_league_read.TestEspnCommands tests.test_league_read.TestEspnShapes -v > "$out/espn-fixtures.txt" 2>&1
-espn_status=$?
-set -e
-printf '%s\n' "$espn_status" > "$out/espn-fixtures.status"
-if [ "$espn_status" -ne 0 ]; then
-  exit "$espn_status"
-fi
-
-board_after=$(fingerprint board.json)
-seed_after=$(fingerprint seed_board.json)
-token_after=$(fingerprint "$token")
-if [ "$board_before" != "$board_after" ] || [ "$seed_before" != "$seed_after" ] || [ "$token_before" != "$token_after" ]; then
-  printf '%s\n' "board.json $board_before -> $board_after" "seed_board.json $seed_before -> $seed_after" "yahoo token $token_before -> $token_after" > "$out/side-effects.txt"
-  exit 1
-fi
-printf '%s\n' 'board.json unchanged' 'seed_board.json unchanged' 'yahoo token unchanged' > "$out/side-effects.txt"
-printf '%s\n' 0 > "$out/run.status"
+bash .cursor/skills/verify-fantasy-football-bot/scripts/prove.sh
 ```
 
-`set -euo pipefail` is on, and the unittest status is saved and re-exited. A failing test or a side-effect mismatch stops the script before `run.status` is 0, and the success lines are not written. Stale evidence is removed first, so an old success file cannot outlive a failed run.
+The script removes stale files in that directory first, then writes:
 
-The ESPN unittest is the user path (`settings`, `teams`, `roster`, `free-agents`, `matchup`) with the mock on `http_json` only. Side effects are a before/after checksum of `board.json`, `seed_board.json`, and the Yahoo token. An existing gitignored `board.json` stays valid when the drive does not change it. The Yahoo connect test, when run from the full suite, writes its token inside a temporary directory and deletes it.
+- `launch.txt` must contain the line `launch ok` (compileall, then both `--help` commands).
+- `doctor.json` is `{"ok": true, "seed_players": N}` with N at least 150. The shipped seed reports 267.
+- `espn-fixtures.txt` is the verbose unittest output. A pass ends in `OK`.
+- `espn-fixtures.status` is that process's exit code. `0` is a pass.
+- `network-lock.txt` starts with `connect_attempts 0`. Before the tests import, the script replaces `socket.socket.connect` with a function that records the address and raises. A pass with zero attempts is the observation that this drive did not open a socket to ESPN, Sleeper, or Yahoo. The tests mock `league_read.http_json`. The lock is how you see that the mock held.
+- `side-effects.txt` contains `board.json unchanged`, `seed_board.json unchanged`, and `yahoo token unchanged`. The token path is `$XDG_CONFIG_HOME/fantasy-football-bot/yahoo_token.json`, or `~/.config/fantasy-football-bot/yahoo_token.json`. Checksums are sha256, or the word `absent` when the file is missing.
+- `git-status.txt` contains `git status unchanged` when `git status --porcelain` is the same before and after the drive.
+- `run.status` is `0` only when the tests, the lock, the checksums, and git status all passed. A failure writes `1` and exits 1. Stale files are removed at the start, so an old `0` cannot outlive a failed run.
 
-`--replay` on `watch` is the only dry-run flag. It skips the pre-draft wait, the injury refresh, and the poll loop. It still fetches the draft, the user, the league, and the pick list once. It does not submit a pick (`submits_picks` is false). Do not run it here. `league_read.py` has no dry-run flag. ESPN requests are GET only. `board` and `seed` have no dry-run; both fetch ranking feeds, and `seed` can replace `seed_board.json`. Do not run them here.
+The ESPN unittest is the user path (`settings`, `teams`, `roster`, `free-agents`, `matchup`) with the mock on `http_json` only. An existing gitignored `board.json` stays valid when the drive does not change it. The Yahoo connect test is not part of this drive. When the full suite runs it, that test writes its token inside a temporary directory and deletes it.
+
+`--replay` on `watch` is the only dry-run flag. It skips the pre-draft wait, the injury refresh, and the poll loop. It still fetches the draft, the user, the league, and the pick list once. It does not submit a pick (`submits_picks` is false). Do not run it here. `league_read.py` has no dry-run flag. ESPN requests are GET only. `board` and `seed` have no dry-run. Both fetch ranking feeds, and `seed` can replace `seed_board.json`. Do not run them here.
 
 ## Cleanup
 
-Kill only a process this skill started. Launch and the fixture drive start none.
+Kill only a process this skill started. Launch and the fixture drive start none. `prove.sh` exits on its own.
+
+These checks read the evidence. They do not delete it, and they do not delete `seed_board.json`:
 
 ```bash
 set -euo pipefail
 out=/tmp/verify-fantasy-football-bot
 test "$(cat "$out/espn-fixtures.status")" = 0
 test "$(cat "$out/run.status")" = 0
+grep -qx 'launch ok' "$out/launch.txt"
+grep -q '"ok": true' "$out/doctor.json"
+test -s "$out/espn-fixtures.txt"
+grep -qx 'connect_attempts 0' "$out/network-lock.txt"
 grep -qx 'board.json unchanged' "$out/side-effects.txt"
 grep -qx 'seed_board.json unchanged' "$out/side-effects.txt"
 grep -qx 'yahoo token unchanged' "$out/side-effects.txt"
-test -s "$out/doctor.json"
-test -s "$out/espn-fixtures.txt"
+grep -qx 'git status unchanged' "$out/git-status.txt"
+test -d "$out"
 ```
 
-Leave `/tmp/verify-fantasy-football-bot/` in place. Do not delete `seed_board.json`.
+Leave `/tmp/verify-fantasy-football-bot/` in place.
+
+## Helpers
+
+`scripts/prove.sh` is executable. From the repo root:
+
+```bash
+bash .cursor/skills/verify-fantasy-football-bot/scripts/prove.sh
+```
+
+It finds the repo root from its own path, then runs Launch, Doctor, the ESPN drive, the evidence writes, and the Cleanup checks, in that order. Exit 0 means every Cleanup check passed. The evidence directory is still there after it exits.
 
 ## Repo-specific checks
 
@@ -138,3 +129,7 @@ python3 -m unittest
 ```
 
 CI is `.github/workflows/refresh-seed.yml`. It does not run unittest, a linter, or a build. The only command is `python3 draft_mode.py seed`, and only when the UTC month is August or the workflow `force` input is true. There is no linter config and no package build. Do not run `seed` while verifying.
+
+Pick order (`my_pick_numbers`, `phase_at`, `Narrator.step`, `live_steps`) is a separate check: `.cursor/skills/verify-draft-pick-order/SKILL.md`.
+
+When a user-facing feature changes, update `features/` and this skill. `/maintain-verification-skill` is the upkeep loop.
